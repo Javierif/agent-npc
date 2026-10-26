@@ -432,7 +432,7 @@ export class Npc {
   private quipKind(): PhraseKind {
     if (!this.pet && Math.random() < 0.4) {
       const id = activeCharacter().id;
-      return id === "frog" ? "quipFrog" : id === "duck" ? "quipDuck" : "quipPostie";
+      return id === "frog" ? "quipFrog" : id === "duck" ? "quipDuck" : id === "hamster" ? "quipHamster" : "quipPostie";
     }
     return "quip";
   }

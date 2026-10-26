@@ -442,6 +442,12 @@ const POOLS = {
     ["Por fuera elegante, por dentro patalear sin parar", "Elegant on top, paddling like mad underneath", "Elegante por cima, remando sem parar por baixo", "Élégant au-dessus, je pédale comme un fou en dessous", "Oben elegant, unten wild am Paddeln"],
     ["A los patos no se nos moja la reunión", "Meetings just roll off a duck's back", "Reunião não molha pato", "Les réunions glissent sur moi comme l'eau sur les plumes", "Meetings perlen an mir ab wie Wasser"],
   ],
+  quipHamster: [
+    ["Corro en mi rueda toda la mañana y sigo en el mismo sitio: como un sprint", "I run on my wheel all morning and stay in the same place: just like a sprint", "Corro na minha roda a manhã toda e continuo no mesmo lugar: igualzinho a uma sprint", "Je cours dans ma roue toute la matinée et je fais du surplace : comme un sprint", "Ich laufe den ganzen Vormittag im Rad und bleibe an derselben Stelle: wie ein Sprint"],
+    ["Mi caché son literalmente mis mofletes", "My cache is literally my cheeks", "Meu cache são, literalmente, as minhas bochechas", "Mon cache, ce sont littéralement mes joues", "Mein Cache sind buchstäblich meine Backen"],
+    ["Guardo los TODO en los mofletes para el invierno", "I stash my TODOs in my cheeks for the winter", "Guardo os TODO nas bochechas para o inverno", "Je stocke mes TODO dans mes joues pour l'hiver", "Meine TODOs lagere ich für den Winter in den Backen"],
+    ["Traje sin pantalones, pero con mofletes de directivo", "Suit, no trousers, but executive cheeks", "Terno sem calça, mas com bochechas de diretor", "Costume sans pantalon, mais avec des joues de dirigeant", "Anzug ohne Hose, aber mit Chef-Backen"],
+  ],
 } satisfies Record<string, Line[]>;
 
 export type PhraseKind = keyof typeof POOLS;

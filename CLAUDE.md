@@ -4,7 +4,7 @@ Guía del proyecto para Claude Code. Para la documentación de usuario completa 
 
 ## Qué es
 
-**claude-npc** es un NPC de escritorio para Claude Code. Un personajillo original (*Postie*, un blob color melocotón con un post-it de sombrero) camina por encima de la barra de tareas, reacciona a lo que hace Claude, te pide permisos y **te deja mandarle tareas**, incluidas las que escribes en tus notas de Obsidian.
+**claude-npc** es un NPC de escritorio para Claude Code. Un personajillo original (*Postie*, un blob color melocotón con un post-it de sombrero) camina por encima de la barra de tareas, reacciona a lo que hace Claude, te pide permisos y **te deja mandarle tareas**, incluidas las que escribes en tus notas de Obsidian. Hay tres personajes alternativos elegibles en los temas: *Don Rana*, *Don Pato* y *Don Hámster*.
 
 - Estado: **MVP** (v0.1.0). Probado en Windows 11; macOS y Linux están escritos pero sin compilar ni probar.
 - Stack: **Tauri 2** (Rust, edición 2024) + frontend en **TypeScript sin framework** + **Vite**. Ventana overlay transparente, siempre encima, sin barra de tareas, con click-through salvo sobre el personaje y sus paneles.
@@ -82,9 +82,9 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 |---|---|
 | `main.ts` | Cableado: estado global (`store`), suscripción a eventos del backend, traducción de estados de Claude a `Mood`. |
 | `api.ts` | Tipos compartidos con Rust y wrappers tipados de `invoke`/`listen`. Si cambias una struct serde en Rust, actualiza aquí. |
-| `npc.ts` | Bucle de comportamiento del personaje (andar, sentarse, dormir, saludar, esconderse, modo mini, arrastrar/soltar, ojos que siguen el puntero). |
+| `npc.ts` | Bucle de comportamiento del personaje (andar, sentarse, dormir, saludar, esconderse, modo mini, arrastrar/soltar, ojos que siguen el puntero). `quipKind` elige la familia de chistes según el personaje activo (`quip*` de `i18n.ts`). |
 | `physics.ts` | Cuerpo rígido 2D mínimo: gravedad, rebotes, impactos. Adaptado de just-simple-npc. |
-| `sprite.ts` | Personaje Postie dibujado desde código; poses y paletas/temas (claves de color `obswepmyYfLKtrzq123`). |
+| `sprite.ts` | Personaje Postie dibujado desde código; poses y paletas/temas (claves de color `obswepmyYfLKtrzq123`). Registra los personajes alternativos (`CHARACTERS`: `frog`, `duck`, `hamster`) y los temas que los usan (`THEMES`: `rana`, `pato`, `hamster`, con etiqueta «Don …»). |
 | `petsprite.ts` | Render de Codex Pets por filas de spritesheet. |
 | `ui.ts` | Menú, paneles (tareas, sesiones, Obsidian, ajustes), tarjetas de permiso; helper `h()` para crear DOM. `sessionCard` (`pickSession`): panel de una sesión, abierto al pulsar su fila o su hijo, con estado/actividad, sus permisos pendientes, preguntas con opciones (única/múltiple, «Otra respuesta…», «Enviar respuestas»), aprobación de plan y cuadro *Escribir* (`--resume`, oculto mientras la sesión piensa, trabaja o espera). Sesiones muestra la sección *Recientes* (`history.rs`, sin duplicar las activas). En tareas, *Reintentar* (fallidas, reenvía prompt, carpeta y sesión) y *Continuar* (terminadas bien); aviso/botón *Iniciar sesión* y estado del CLI en Ajustes > Claude > Conexión. En esa misma pestaña, *Ver eventos recibidos* lista el recuento por evento y las últimas líneas de `hook_log` (`api.hookLog`), y avisa si nunca ha llegado una `PermissionRequest`. Las tarjetas de permiso se cachean para no perder el foco. |
 | `activity.ts` | `describeActivity`: convierte una llamada de herramienta cruda (`mcp__…`, rutas, URLs) en una frase legible para burbujas, filas de sesión y el panel. |
@@ -92,8 +92,9 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 | `followers.ts` | Dibuja los hijos que siguen al personaje principal; cada uno repite lo que hace su sesión y, al pulsarlo, abre el panel de esa sesión (`pickSession`). |
 | `frog.ts` | Personaje alternativo «Don Rana» (rana con chaqueta azul marino, camisa blanca y corbata roja), como `Character` de `sprite.ts`. |
 | `duck.ts` | Personaje alternativo «Don Pato» (pato con chaqueta gris carbón, camisa blanca y corbata granate), como `Character` de `sprite.ts`. |
+| `hamster.ts` | Personaje alternativo «Don Hámster» (`id: "hamster"`; hámster con chaqueta verde bosque, camisa blanca y corbata mostaza, sin pantalones, patitas rosas), como `Character` de `sprite.ts`. |
 | `markdown.ts` | Intérprete de Markdown seguro para las respuestas de Claude (títulos, listas, código, tablas, citas, negrita/cursiva/código/enlaces). Construye nodos DOM, nunca `innerHTML`. `firstLine` da la primera línea como texto plano para burbujas y resúmenes. Lo usan `ui.ts` y `main.ts`. |
-| `i18n.ts` | Diccionario es/en/pt/fr/de. |
+| `i18n.ts` | Diccionario es/en/pt/fr/de. Incluye los chistes de cada personaje (`quipPostie`, `quipFrog`, `quipDuck`, `quipHamster`). |
 | `styles.css` | Estilos. |
 
 ## Convenciones

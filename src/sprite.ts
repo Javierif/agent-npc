@@ -4,6 +4,7 @@
 
 import { DUCK } from "./duck";
 import { FROG } from "./frog";
+import { HAMSTER } from "./hamster";
 
 export type Pose =
   | "idle" | "blink" | "walk1" | "walk2" | "sit" | "sleep1" | "sleep2"
@@ -92,6 +93,7 @@ export const THEMES: Record<string, { label: string; character?: string; colors:
   postie: { label: "Postie", colors: {} },
   rana: { label: "Don Rana", character: "frog", colors: {} },
   pato: { label: "Don Pato", character: "duck", colors: {} },
+  hamster: { label: "Don Hámster", character: "hamster", colors: {} },
   menta: { label: "Menta", colors: { b: "#8fd9a8", s: "#5fb883", p: "#ffb3c7", y: "#ff9ecb", Y: "#e06fa3" } },
   noche: { label: "Noche", colors: { b: "#9d8cf0", s: "#7261c9", p: "#f0a0d8", y: "#5ec8ff", Y: "#3a9fd6", o: "#1d1840" } },
   tostada: { label: "Tostada", colors: { b: "#d9a066", s: "#b57a3e", p: "#e8806a", y: "#f6f1e0", Y: "#d9cfae", o: "#2f1d10" } },
@@ -426,7 +428,7 @@ const POSTIE: Character = {
   sitLegs: postieSitLegs,
 };
 
-const CHARACTERS: Record<string, Character> = { postie: POSTIE, frog: FROG, duck: DUCK };
+const CHARACTERS: Record<string, Character> = { postie: POSTIE, frog: FROG, duck: DUCK, hamster: HAMSTER };
 active = POSTIE;
 
 const cache = new Map<string, HTMLCanvasElement>();
