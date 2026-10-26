@@ -12,7 +12,7 @@ use std::{
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::state::{Quota, Session, Shared, Usage};
+use crate::state::{HookLogEntry, Quota, Session, Shared, Usage};
 
 const MARKER: &str = "src=claude-npc";
 const HOOK_EVENTS: [&str; 11] = [
@@ -125,12 +125,37 @@ fn hook(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
     if event.is_empty() {
         return json!({}); // not a Claude Code hook payload; ignore instead of clearing the UI
     }
+    log_hook(shared, event, payload);
     update_session(app, shared, event, payload);
     if event == "PermissionRequest" {
         permission(app, shared, payload)
     } else {
         json!({})
     }
+}
+
+const HOOK_LOG_MAX: usize = 80;
+
+/// Remembers that `event` arrived (never its prompts or tool input), for the diagnostics list.
+fn log_hook(shared: &Shared, event: &str, payload: &Value) {
+    let entry = HookLogEntry {
+        ms: now_ms(),
+        event: event.to_string(),
+        session: payload["session_id"].as_str().unwrap_or("?").chars().take(8).collect(),
+        tool: payload["tool_name"].as_str().map(str::to_string),
+        note: if event == "Notification" { payload["message"].as_str().map(|m| truncate(m, 100)) } else { None },
+    };
+    let mut log = shared.hook_log.lock().unwrap();
+    if log.len() >= HOOK_LOG_MAX {
+        log.pop_front();
+    }
+    log.push_back(entry);
+}
+
+/// The latest hook events received, newest first.
+#[tauri::command]
+pub fn hook_log(state: State<Arc<Shared>>) -> Vec<HookLogEntry> {
+    state.hook_log.lock().unwrap().iter().rev().cloned().collect()
 }
 
 const AGENT_STATES: [&str; 7] = ["idle", "thinking", "working", "waiting", "attention", "done", "error"];
@@ -668,6 +693,29 @@ mod tests {
         assert_eq!(decision["updatedInput"]["answers"]["Which one?"], "B");
         assert_eq!(decision["updatedInput"]["questions"][0]["question"], "Which one?", "the original input is kept");
         assert!(shared.answers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_hook_log_keeps_names_only_and_is_capped() {
+        let shared = shared();
+        let secret = json!({ "session_id": "0123456789abcdef", "tool_name": "Bash",
+            "tool_input": { "command": "echo top-secret" }, "prompt": "top-secret" });
+        log_hook(&shared, "PreToolUse", &secret);
+        let note = json!({ "session_id": "s2", "message": "Claude needs your permission to use Bash" });
+        log_hook(&shared, "Notification", &note);
+        {
+            let log = shared.hook_log.lock().unwrap();
+            assert_eq!(log[0].event, "PreToolUse");
+            assert_eq!(log[0].session, "01234567");
+            assert_eq!(log[0].tool.as_deref(), Some("Bash"));
+            assert_eq!(log[0].note, None, "only Notification keeps its message");
+            assert_eq!(log[1].note.as_deref(), Some("Claude needs your permission to use Bash"));
+            assert!(!format!("{:?}", *log).contains("top-secret"), "prompts and tool input are never kept");
+        }
+        for _ in 0..(HOOK_LOG_MAX + 10) {
+            log_hook(&shared, "Stop", &json!({ "session_id": "x" }));
+        }
+        assert_eq!(shared.hook_log.lock().unwrap().len(), HOOK_LOG_MAX);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
     process::Child,
@@ -97,9 +97,24 @@ pub struct Shared {
     pub tasks: Mutex<HashMap<u64, Child>>,
     /// Sessions a headless `claude -p --resume` run is working in: the `SessionEnd` of that run is not the user's.
     pub headless: Mutex<HashMap<String, Headless>>,
+    /// The latest hook events received (names only, no prompts), newest last: lets the user see what a client sends.
+    pub hook_log: Mutex<VecDeque<HookLogEntry>>,
     pub next_id: AtomicU64,
     pub usage: Mutex<Option<Usage>>,
     pub remote: Mutex<Option<Arc<tiny_http::Server>>>,
+}
+
+/// One received hook event, as shown in the diagnostics list.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HookLogEntry {
+    pub ms: u64,
+    pub event: String,
+    /// First characters of the session id.
+    pub session: String,
+    pub tool: Option<String>,
+    /// For `Notification` only: what Claude says it needs (e.g. permission to use a tool).
+    pub note: Option<String>,
 }
 
 /// Background runs in one session, and until when its trailing hook events still count as theirs.
@@ -145,6 +160,7 @@ impl Shared {
             answers: Mutex::default(),
             tasks: Mutex::default(),
             headless: Mutex::default(),
+            hook_log: Mutex::default(),
             next_id: AtomicU64::new(1),
             usage: Mutex::new(None),
             remote: Mutex::new(None),

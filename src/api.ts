@@ -75,6 +75,15 @@ export interface Question {
   options: Array<{ label: string; description?: string }>;
 }
 
+/** One hook event the NPC received (names only), for the diagnostics list. */
+export interface HookLogEntry {
+  ms: number;
+  event: string;
+  session: string;
+  tool: string | null;
+  note: string | null;
+}
+
 export interface PermissionRequest {
   id: number;
   sessionId: string;
@@ -134,6 +143,7 @@ export const api = {
   cancelTask: (id: number) => invoke<boolean>("cancel_task", { id }),
   authStatus: () => invoke<boolean>("auth_status"),
   authLogin: () => invoke("auth_login"),
+  hookLog: () => invoke<HookLogEntry[]>("hook_log"),
   recentSessions: () => invoke<RecentSession[]>("recent_sessions"),
   detectVaults: () => invoke<string[]>("detect_vaults"),
   scanVault: () => invoke<VaultTask[]>("scan_vault"),

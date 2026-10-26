@@ -18,6 +18,11 @@ mockIPC((cmd, args) => {
     case "scan_vault": return [{ file: "Ideas/proyecto.md", line: 4, text: "Resumir las notas de la reunión" }];
     case "detect_vaults": return ["C:/Users/demo/Notes"];
     case "start_task": return 7;
+    case "hook_log": return [
+      { ms: Date.now() - 2_000, event: "Notification", session: "aaaaaaaa", tool: null, note: "Claude needs your permission to use Bash" },
+      { ms: Date.now() - 5_000, event: "PreToolUse", session: "aaaaaaaa", tool: "Bash", note: null },
+      { ms: Date.now() - 9_000, event: "UserPromptSubmit", session: "aaaaaaaa", tool: null, note: null },
+    ];
     case "answer_question": return true;
     case "resolve_permission": return true;
     case "auth_status": return false;

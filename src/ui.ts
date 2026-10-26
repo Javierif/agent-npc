@@ -854,6 +854,21 @@ export class Ui {
     const phone = h("div", { class: "muted small phone" });
     const hooks = h("div", { class: "row" });
     const cli = h("div", { class: "row" });
+    // Diagnostics: which hook events actually reach the NPC (names only), to tell what each client sends.
+    const diag = h("div", { class: "diag" });
+    const showDiag = async () => {
+      const log = await api.hookLog().catch(() => []);
+      const counts = new Map<string, number>();
+      for (const entry of log) counts.set(entry.event, (counts.get(entry.event) ?? 0) + 1);
+      diag.replaceChildren(
+        h("div", { class: "muted small" }, t("Últimos {n} eventos recibidos de Claude Code:", { n: log.length })),
+        h("div", { class: "small" }, [...counts].map(([event, n]) => `${event} ×${n}`).join(" · ") || t("Ninguno todavía.")),
+        h("div", { class: "small" }, counts.has("PermissionRequest")
+          ? t("✅ Llegan peticiones de permiso: salen como tarjeta.")
+          : t("⚠ Aún no ha llegado ninguna petición de permiso (PermissionRequest).")),
+        ...log.slice(0, 14).map((e) =>
+          h("div", { class: "muted small diag-line" }, `${new Date(e.ms).toLocaleTimeString()} · ${e.event}${e.tool ? ` · ${e.tool}` : ""} · ${e.session}${e.note ? ` — ${e.note}` : ""}`)));
+    };
 
     const petPath = h("input", { class: "field small", placeholder: t("Ruta de la carpeta del pet") });
     const importPet = async () => {
@@ -946,7 +961,8 @@ export class Ui {
           h("div", { class: "slider-ends muted small" }, h("span", {}, t("Tranquilo")), h("span", {}, t("Hiperactivo"))),
           activityLabel)),
       claude: pane(
-        section(t("Conexión"), true, hooks, cli),
+        section(t("Conexión"), true, hooks, cli,
+          h("div", { class: "row" }, h("button", { class: "btn", onclick: () => void showDiag() }, t("Ver eventos recibidos"))), diag),
         section(t("Permisos y edición"), true,
           check(t("Permitir que Claude edite archivos"), "allowEdits", t("Tareas lanzadas desde aquí usan acceptEdits.")),
           check(t("Aprobar permisos automáticamente"), "autoApprove", t("⚠ Responde “Permitir” a todo sin preguntar.")),

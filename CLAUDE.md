@@ -36,8 +36,8 @@ npm run bridge         # compila npc-bridge -> src-tauri/target/debug/npc-bridge
 Pruebas:
 
 ```bash
-npm run test:ui        # node --test tests/*.test.mjs  (traducciones completas y coherentes en los 5 idiomas)
-npm run test           # cargo test: hooks, permisos, vault, Telegram/webhooks (servidores simulados), puentes, vista móvil, temas, parser de claude
+npm run test:ui        # node --test tests/*.test.mjs  (traducciones completas y coherentes en los 5 idiomas; intérprete Markdown de `markdown.ts`)
+npm run test           # cargo test: hooks, permisos, sesiones en segundo plano, vault, Telegram/webhooks (servidores simulados), puentes, vista móvil, temas, historial, parser de claude
 npx tsc --noEmit       # tipos del frontend
 ```
 
@@ -61,9 +61,9 @@ vault.rs ◀── vigila *.md de la vault (`- [ ] … #claude`) ──▶ runne
 |---|---|
 | `lib.rs` | Ventana overlay, hit-test/click-through, bandeja, atajos globales `Ctrl+Alt+Y/N`, registro de comandos Tauri, arranque de servicios. |
 | `main.rs` | Punto de entrada mínimo. |
-| `state.rs` | `Settings` (serde, camelCase, persistido en `settings.json` del dir de config de la app) y `Shared` (sesiones, cuota, permisos pendientes, respuestas a preguntas `answers`, tareas). `Session` lleva `topic` (primer prompt) y `prompt` (último), tomados del hook `UserPromptSubmit`. |
-| `hooks.rs` | Servidor HTTP local (`tiny_http`): recibe hooks de Claude Code, deriva el estado de sesión, retiene las `PermissionRequest` hasta que el usuario responde, `/agent`, `/usage`; instala/quita hooks en `~/.claude/settings.json` (11 eventos en `HOOK_EVENTS`). Las `PermissionRequest` de `AskUserQuestion` y `ExitPlanMode` llevan `questions` / `plan`; `answer_question` permite la llamada con `decision.updatedInput.answers` (`{pregunta: etiqueta(s)}`). La aprobación automática nunca responde `AskUserQuestion`. |
-| `runner.rs` | Lanza `claude -p --output-format stream-json`, parsea el JSON en streaming, emite progreso y resultado. `start_task` acepta `resume` (`--resume <id>`, solo ids tipo UUID) y captura el `session_id` del evento `system/init`, que emite como `task-update {kind:"session"}`. `auth_status` ejecuta `claude auth status` y lee `loggedIn`. |
+| `state.rs` | `Settings` (serde, camelCase, persistido en `settings.json` del dir de config de la app) y `Shared` (sesiones, cuota, permisos pendientes, respuestas a preguntas `answers`, tareas, `headless`). `Session` lleva `topic` (primer prompt) y `prompt` (último), tomados del hook `UserPromptSubmit`. `Shared.headless` marca las sesiones en las que hay una ejecución en segundo plano (`claude -p --resume`) con `begin_headless`/`end_headless`; el `SessionEnd` de esa ejecución no cuenta como fin de la sesión durante 5 s de gracia tras terminar (`is_headless`). `Shared.hook_log` guarda los últimos eventos de hook recibidos (`HookLogEntry`, máx. 80 en memoria) para el diagnóstico de Conexión. |
+| `hooks.rs` | Servidor HTTP local (`tiny_http`): recibe hooks de Claude Code, deriva el estado de sesión, retiene las `PermissionRequest` hasta que el usuario responde, `/agent`, `/usage`; instala/quita hooks en `~/.claude/settings.json` (11 eventos en `HOOK_EVENTS`). Las `PermissionRequest` de `AskUserQuestion` y `ExitPlanMode` llevan `questions` / `plan`; `answer_question` permite la llamada con `decision.updatedInput.answers` (`{pregunta: etiqueta(s)}`). La aprobación automática nunca responde `AskUserQuestion`. Un «Permitir» sin respuestas (atajo o Telegram) sobre `AskUserQuestion` no devuelve decisión, así que la pregunta sigue abierta en la terminal. Un `SessionEnd` de una ejecución en segundo plano (`headless`) no borra la sesión ni descarta sus permisos pendientes. El último mensaje de cada sesión se guarda hasta 3000 caracteres (`MAX_MESSAGE_CHARS`). `log_hook` anota cada evento recibido en `Shared.hook_log` con solo el nombre del evento, los 8 primeros caracteres del id de sesión, la herramienta y, solo en `Notification`, el mensaje (máx. 100 caracteres); nunca guarda prompts ni `tool_input`. El comando Tauri `hook_log` lo devuelve (más reciente primero). |
+| `runner.rs` | Lanza `claude -p --output-format stream-json`, parsea el JSON en streaming, emite progreso y resultado. `start_task` acepta `resume` (`--resume <id>`, solo ids tipo UUID) y captura el `session_id` del evento `system/init`, que emite como `task-update {kind:"session"}`. `auth_status` ejecuta `claude auth status` y lee `loggedIn`. Al reanudar una sesión (`resume`), la registra como `headless` mientras dura el proceso y la libera al terminar. |
 | `vault.rs` | Obsidian: detecta vaults, escanea tareas `#claude`, vigila cambios, bandeja `Claude NPC Inbox.md`, reescritura segura de la nota. |
 | `bridge.rs` + `bin/npc-bridge.rs` | Traduce hooks de Gemini CLI, Cursor y Codex al endpoint `/agent`. |
 | `history.rs` | `recent_sessions`: lista sesiones pasadas leyendo `~/.claude/projects/*/*.jsonl` (solo cabecera y cola; título del último `custom-title` o último prompt; cwd de los registros). Alimenta «Recientes» en Sesiones. |
@@ -86,12 +86,13 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 | `physics.ts` | Cuerpo rígido 2D mínimo: gravedad, rebotes, impactos. Adaptado de just-simple-npc. |
 | `sprite.ts` | Personaje Postie dibujado desde código; poses y paletas/temas (claves de color `obswepmyYfLKtrzq123`). |
 | `petsprite.ts` | Render de Codex Pets por filas de spritesheet. |
-| `ui.ts` | Menú, paneles (tareas, sesiones, Obsidian, ajustes), tarjetas de permiso; helper `h()` para crear DOM. `sessionCard` (`pickSession`): panel de una sesión, abierto al pulsar su fila o su hijo, con estado/actividad, sus permisos pendientes, preguntas con opciones (única/múltiple, «Otra respuesta…», «Enviar respuestas»), aprobación de plan y cuadro *Escribir* (`--resume`, oculto mientras la sesión piensa, trabaja o espera). Sesiones muestra la sección *Recientes* (`history.rs`, sin duplicar las activas). En tareas, *Reintentar* (fallidas, reenvía prompt, carpeta y sesión) y *Continuar* (terminadas bien); aviso/botón *Iniciar sesión* y estado del CLI en Ajustes > Claude > Conexión. Las tarjetas de permiso se cachean para no perder el foco. |
+| `ui.ts` | Menú, paneles (tareas, sesiones, Obsidian, ajustes), tarjetas de permiso; helper `h()` para crear DOM. `sessionCard` (`pickSession`): panel de una sesión, abierto al pulsar su fila o su hijo, con estado/actividad, sus permisos pendientes, preguntas con opciones (única/múltiple, «Otra respuesta…», «Enviar respuestas»), aprobación de plan y cuadro *Escribir* (`--resume`, oculto mientras la sesión piensa, trabaja o espera). Sesiones muestra la sección *Recientes* (`history.rs`, sin duplicar las activas). En tareas, *Reintentar* (fallidas, reenvía prompt, carpeta y sesión) y *Continuar* (terminadas bien); aviso/botón *Iniciar sesión* y estado del CLI en Ajustes > Claude > Conexión. En esa misma pestaña, *Ver eventos recibidos* lista el recuento por evento y las últimas líneas de `hook_log` (`api.hookLog`), y avisa si nunca ha llegado una `PermissionRequest`. Las tarjetas de permiso se cachean para no perder el foco. |
 | `activity.ts` | `describeActivity`: convierte una llamada de herramienta cruda (`mcp__…`, rutas, URLs) en una frase legible para burbujas, filas de sesión y el panel. |
 | `children.ts` | «Hijos»: copias pequeñas del personaje que el usuario asigna a una sesión; cuáles tienen y cómo se ven se guarda en `localStorage`. |
 | `followers.ts` | Dibuja los hijos que siguen al personaje principal; cada uno repite lo que hace su sesión y, al pulsarlo, abre el panel de esa sesión (`pickSession`). |
 | `frog.ts` | Personaje alternativo «Don Rana» (rana con chaqueta azul marino, camisa blanca y corbata roja), como `Character` de `sprite.ts`. |
 | `duck.ts` | Personaje alternativo «Don Pato» (pato con chaqueta gris carbón, camisa blanca y corbata granate), como `Character` de `sprite.ts`. |
+| `markdown.ts` | Intérprete de Markdown seguro para las respuestas de Claude (títulos, listas, código, tablas, citas, negrita/cursiva/código/enlaces). Construye nodos DOM, nunca `innerHTML`. `firstLine` da la primera línea como texto plano para burbujas y resúmenes. Lo usan `ui.ts` y `main.ts`. |
 | `i18n.ts` | Diccionario es/en/pt/fr/de. |
 | `styles.css` | Estilos. |
 
@@ -101,7 +102,7 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 - **Rust:** errores sin `panic` en caminos de usuario; los comandos Tauri devuelven `Result<_, String>` y el frontend los muestra con `errorText`. Cada módulo lleva tests unitarios junto al código; los servicios de red se prueban contra servidores simulados (por ejemplo `CLAUDE_NPC_TELEGRAM_API` redirige la API de Telegram).
 - **Frontend:** sin framework; DOM con `h()`. Las regiones interactivas se reportan al backend con `set_hit_regions` para el click-through; un panel nuevo debe registrarse ahí o no recibirá clics.
 - **Formato y límites:** los archivos de vault se limitan (`MAX_FILES`, `MAX_FILE_BYTES`, `MAX_RESULT_CHARS`); respeta ese tipo de topes en entradas externas (temas, pets, webhooks).
-- **Seguridad:** nunca guardar secretos fuera de la config de la app (Telegram y webhooks van en texto plano ahí, y está documentado); no ampliar el servidor de hooks más allá de loopback; no añadir rutas de escritura a la vista del móvil.
+- **Seguridad:** nunca guardar secretos fuera de la config de la app (Telegram y webhooks van en texto plano ahí, y está documentado); no ampliar el servidor de hooks más allá de loopback; no añadir rutas de escritura a la vista del móvil; el registro de diagnóstico de hooks (`hook_log`) no debe guardar prompts ni entradas de herramientas.
 - Idioma de documentación: español. Mantén README y MVP coherentes con cualquier cambio de funcionalidad o de lo verificado.
 - Commits en el estilo del repo; `dist/`, `node_modules/` y `src-tauri/target/` están ignorados.
 
@@ -120,8 +121,8 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 2. Una vault real de Obsidian.
 3. Gemini CLI, Cursor y Codex reales, y bots reales de Telegram/Slack/Feishu.
 4. Atajos `Ctrl+Alt+Y/N` con teclado físico; macOS, Linux, WSL y SSH remoto.
-5. Continuar una conversación con `--resume` (*Continuar* en tareas y *Escribir* en una sesión) con un `claude` real, también sobre una sesión creada en Claude Desktop.
+5. Continuar una conversación con `--resume` (*Continuar* en tareas y *Escribir* en una sesión) con un `claude` real, también sobre una sesión creada en Claude Desktop. Incluye comprobar que la sesión retomada sigue viva durante una tarea real tras el arreglo de `headless` (no probado).
 6. El login desde la NPC (*Iniciar sesión* abre una terminal con `claude auth login`) y el sondeo de `claude auth status` al cerrarla.
 7. Que Claude Code acepte `decision.updatedInput.answers` en `AskUserQuestion` (respuestas desde el panel de la sesión) y que la aprobación de `ExitPlanMode` se comporte como se espera.
-8. Que las sesiones de Claude Desktop envíen el hook `PermissionRequest` (y, por tanto, aparezcan sus permisos y preguntas en el NPC).
+8. Que las sesiones de Claude Desktop envíen el hook `PermissionRequest` (y, por tanto, aparezcan sus permisos y preguntas en el NPC). Para diagnosticarlo, Ajustes > Claude > Conexión > *Ver eventos recibidos* muestra qué eventos llegan (el diagnóstico está probado con tests y la vista previa, no con eventos reales de Desktop).
 9. La sección *Recientes* con un historial real grande (límites de lectura de `history.rs`) y *Reintentar* con un `claude` real.

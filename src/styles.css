@@ -357,6 +357,17 @@ kbd {
   cursor: pointer;
 }
 
+.diag {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.diag-line {
+  font-family: Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .section-label {
   margin-top: 4px;
   font-weight: 700;

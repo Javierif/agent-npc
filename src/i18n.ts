@@ -64,6 +64,12 @@ export const DICT: Record<string, Entry> = {
   "Respóndele arriba para que siga.": e("Answer it above so it can go on.", "Responda acima para que continue.", "Répondez ci-dessus pour qu'elle continue.", "Antworte oben, damit es weitergeht."),
   "Está trabajando; podrás escribirle cuando termine.": e("It is working; you can write to it when it finishes.", "Está trabalhando; você poderá escrever quando terminar.", "Elle travaille ; vous pourrez lui écrire quand elle aura fini.", "Sie arbeitet; du kannst schreiben, wenn sie fertig ist."),
   "Enviado a {name}": e("Sent to {name}", "Enviado para {name}", "Envoyé à {name}", "An {name} gesendet"),
+  // hook diagnostics
+  "Ver eventos recibidos": e("Show received events", "Ver eventos recebidos", "Voir les événements reçus", "Empfangene Ereignisse anzeigen"),
+  "Últimos {n} eventos recibidos de Claude Code:": e("Last {n} events received from Claude Code:", "Últimos {n} eventos recebidos do Claude Code:", "{n} derniers événements reçus de Claude Code :", "Letzte {n} Ereignisse von Claude Code:"),
+  "Ninguno todavía.": e("None yet.", "Nenhum ainda.", "Aucun pour l'instant.", "Noch keine."),
+  "✅ Llegan peticiones de permiso: salen como tarjeta.": e("✅ Permission requests arrive: they show as a card.", "✅ Chegam pedidos de permissão: aparecem como cartão.", "✅ Les demandes d'autorisation arrivent : elles s'affichent en carte.", "✅ Berechtigungsanfragen kommen an: sie erscheinen als Karte."),
+  "⚠ Aún no ha llegado ninguna petición de permiso (PermissionRequest).": e("⚠ No permission request (PermissionRequest) has arrived yet.", "⚠ Ainda não chegou nenhum pedido de permissão (PermissionRequest).", "⚠ Aucune demande d'autorisation (PermissionRequest) n'est encore arrivée.", "⚠ Noch keine Berechtigungsanfrage (PermissionRequest) eingetroffen."),
   // CLI sign-in
   "Iniciar sesión": e("Sign in", "Entrar", "Se connecter", "Anmelden"),
   "El CLI de Claude no tiene la sesión iniciada. Inicia sesión una vez y vuelve a enviar.":

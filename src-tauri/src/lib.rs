@@ -255,6 +255,7 @@ pub fn run() {
             remote_info,
             hooks::resolve_permission,
             hooks::answer_question,
+            hooks::hook_log,
             hooks::hooks_installed,
             hooks::install_hooks,
             hooks::uninstall_hooks,
