@@ -1,6 +1,6 @@
 import {
   api, errorText,
-  type PermissionRequest, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
+  type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
 } from "./api";
 import { describeActivity } from "./activity";
 import { firstLine, renderMarkdown } from "./markdown";
@@ -111,6 +111,33 @@ function ago(ms: number): string {
 
 const SVG = "http://www.w3.org/2000/svg";
 
+/** Obsidian-style purple gem for the vault button (drawn from facets, no external asset). */
+function obsidianIcon(): SVGElement {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("aria-hidden", "true");
+  const facets: Array<[string, string]> = [
+    ["M14.2 1.2 6.4 6.6 3.6 14.8 8.4 22.6 15.6 22.2 20.4 16.2 19.2 7.4Z", "#7c3aed"],
+    ["M14.2 1.2 6.4 6.6 12 9.6 19.2 7.4Z", "#a78bfa"],
+    ["M6.4 6.6 3.6 14.8 12 9.6Z", "#6d28d9"],
+    ["M3.6 14.8 8.4 22.6 12 9.6Z", "#5b21b6"],
+    ["M12 9.6 8.4 22.6 15.6 22.2Z", "#8b5cf6"],
+    ["M12 9.6 15.6 22.2 20.4 16.2 19.2 7.4Z", "#6d28d9"],
+  ];
+  for (const [d, fill] of facets) {
+    const p = document.createElementNS(SVG, "path");
+    p.setAttribute("d", d);
+    p.setAttribute("fill", fill);
+    p.setAttribute("stroke", "#2e1065");
+    p.setAttribute("stroke-width", "0.8");
+    p.setAttribute("stroke-linejoin", "round");
+    svg.append(p);
+  }
+  return svg;
+}
+
 function untilReset(resetsAt: number | null): string {
   if (!resetsAt) return "";
   const minutes = Math.max(0, Math.round((resetsAt * 1000 - Date.now()) / 60000));
@@ -192,7 +219,7 @@ export class Ui {
     this.panelEl.style.display = "none";
     this.root.append(this.notesEl, this.panelEl, this.permsEl, this.fanEl);
 
-    for (const [id, icon] of [["tasks", "📝"], ["sessions", "🖥️"], ["vault", "📓"], ["settings", "⚙️"]] as Array<[TabId, string]>) {
+    for (const [id, icon] of [["tasks", "📝"], ["sessions", "🖥️"], ["vault", obsidianIcon()], ["settings", "⚙️"]] as Array<[TabId, string | Node]>) {
       const button = h("button", { class: "fan-btn", onclick: () => this.toggle(id) }, icon, h("span", { class: "badge" }));
       this.fanButtons.set(id, button);
       this.fanEl.append(button);
@@ -794,6 +821,69 @@ export class Ui {
   private vaultTab(): TabBody {
     const body = h("div", { class: "tab" });
     let detected: string[] | null = null;
+    // Favourite palette commands: picker state lives here so it survives a refresh.
+    let picking = false;
+    let commands: ObsidianCommand[] | null = null;
+    let pickError = "";
+    let commandFilter = "";
+    const picker = h("div", { class: "obs-picker" });
+    const favorites = h("div", { class: "row wrap" });
+    const favoriteLabel = (f: ObsidianFavorite) => f.label || f.id;
+    const runFavorite = async (f: ObsidianFavorite) => {
+      try { await api.obsidianRunCommand(f.id); } catch (err) { this.say(errorText(err), 7000); }
+    };
+    const toggleFavorite = (c: ObsidianCommand) => {
+      const current = this.store.settings.obsidianFavorites ?? [];
+      const next = current.some((f) => f.id === c.id)
+        ? current.filter((f) => f.id !== c.id)
+        : [...current, { id: c.id, label: c.name.split(":").pop()?.trim() ?? c.id }].slice(0, 6);
+      void this.save({ obsidianFavorites: next });
+    };
+    const drawFavorites = () => {
+      const list = this.store.settings.obsidianFavorites ?? [];
+      favorites.replaceChildren(
+        ...list.map((f) => h("button", { class: "btn", title: f.id, onclick: () => void runFavorite(f) }, favoriteLabel(f))),
+        h("button", { class: "btn", title: t("Elegir comandos favoritos"), onclick: () => { picking = !picking; drawPicker(); void loadCommands(); } }, picking ? "✕" : "★"));
+    };
+    const drawPicker = () => {
+      drawFavorites();
+      if (!picking) { picker.replaceChildren(); return; }
+      const chosen = new Set((this.store.settings.obsidianFavorites ?? []).map((f) => f.id));
+      const filter = h("input", { class: "field small", value: commandFilter, placeholder: t("Filtrar comandos"), autocomplete: "off" });
+      const rows = h("div", { class: "list" });
+      const drawRows = () => {
+        const needle = commandFilter.toLowerCase();
+        const shown = (commands ?? []).filter((c) => `${c.id} ${c.name}`.toLowerCase().includes(needle)).slice(0, 30);
+        rows.replaceChildren(
+          ...shown.map((c) =>
+            h("div", { class: "item" },
+              h("div", { class: "item-main" },
+                h("div", { class: "item-title" }, clip(c.name || c.id, 60)),
+                h("div", { class: "muted small" }, c.id)),
+              h("button", { class: `btn${chosen.has(c.id) ? " ok" : ""}`, title: t("Favorito"), onclick: () => toggleFavorite(c) }, chosen.has(c.id) ? "★" : "☆"))),
+          ...(commands !== null && shown.length === 0 ? [h("div", { class: "muted" }, t("Sin resultados."))] : []));
+      };
+      filter.addEventListener("input", () => { commandFilter = filter.value; drawRows(); });
+      drawRows();
+      picker.replaceChildren(
+        h("div", { class: "muted small" }, t("Hasta 6 comandos de Obsidian como botones. Usan la CLI de Obsidian (1.12.7 o superior, activada en los ajustes de Obsidian, sección General).")),
+        ...(pickError ? [h("div", { class: "muted small" }, pickError)] : commands === null ? [h("div", { class: "muted small" }, t("Cargando…"))] : []),
+        filter, rows);
+    };
+    const loadCommands = async () => {
+      if (!picking || commands !== null) return;
+      pickError = "";
+      try { commands = await api.obsidianCommands(); } catch (err) { pickError = errorText(err); }
+      drawPicker();
+    };
+    const quick = h("input", { class: "field small", placeholder: t("Texto para buscar o para una nota nueva") });
+    const quickAction = async (action: ObsidianAction) => {
+      const text = quick.value.trim();
+      try {
+        await api.obsidianUri(action, text);
+        if (action === "new") quick.value = "";
+      } catch (err) { this.say(errorText(err), 6000); }
+    };
     const refresh = () => {
       const vault = this.store.settings.vaultPath;
       if (!vault) {
@@ -818,10 +908,16 @@ export class Ui {
         try { await api.vaultAddTask(text); this.store.vaultTasks = await api.scanVault(); this.refresh(); } catch (err) { this.say(errorText(err), 6000); }
       };
       add.addEventListener("keydown", (event) => { if (event.key === "Enter") void addTask(); });
+      drawPicker();
       body.replaceChildren(
         h("h3", {}, t("Obsidian")),
         h("div", { class: "muted small" }, t("Vault: {name}", { name: baseName(vault) })),
         h("div", { class: "row" }, add, h("button", { class: "btn", onclick: () => void addTask() }, t("Añadir"))),
+        h("div", { class: "row wrap" },
+          h("button", { class: "btn", onclick: () => void quickAction("daily") }, `📅 ${t("Nota diaria")}`),
+          h("button", { class: "btn", onclick: () => void quickAction("search") }, `🔍 ${t("Buscar")}`),
+          h("button", { class: "btn", onclick: () => void quickAction("new") }, `✎ ${t("Nota nueva")}`)),
+        quick, favorites, picker,
         h("div", { class: "list" },
           ...this.store.vaultTasks.slice(0, 8).map((task) =>
             h("div", { class: "item" },

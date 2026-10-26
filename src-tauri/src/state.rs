@@ -28,6 +28,16 @@ pub struct Settings {
     pub language: String,
     /// How restless the character is, 0 (sleepy) to 100 (hyperactive).
     pub activity: u8,
+    /// How many children (small followers) are drawn at once; the rest collapse into "+N".
+    pub max_children: u8,
+    /// Obsidian palette commands shown as buttons in the Obsidian panel (run through its CLI).
+    pub obsidian_favorites: Vec<ObsidianFavorite>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ObsidianFavorite {
+    pub id: String,
+    pub label: String,
 }
 
 impl Default for Settings {
@@ -48,6 +58,8 @@ impl Default for Settings {
             feishu_webhook: String::new(),
             language: "auto".into(),
             activity: 50,
+            max_children: 8,
+            obsidian_favorites: Vec::new(),
         }
     }
 }

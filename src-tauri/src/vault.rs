@@ -174,7 +174,7 @@ pub fn append_inbox(vault: &Path, text: &str) -> Result<(), String> {
     write_atomic(&path, &content)
 }
 
-fn percent_encode(text: &str) -> String {
+pub(crate) fn percent_encode(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
@@ -186,7 +186,15 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
-fn vault_dir(shared: &Shared) -> Result<PathBuf, String> {
+/// Name Obsidian knows the vault by: the folder's name.
+pub(crate) fn vault_name(dir: &Path) -> Result<String, String> {
+    dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.contains(['\n', '\r']))
+        .ok_or_else(|| "invalid vault path".to_string())
+}
+
+pub(crate) fn vault_dir(shared: &Shared) -> Result<PathBuf, String> {
     let path = shared.settings.lock().unwrap().vault_path.clone();
     let dir = PathBuf::from(path.trim());
     if path.trim().is_empty() || !dir.is_dir() {
@@ -252,10 +260,7 @@ pub fn vault_add_task(text: String, state: State<Arc<Shared>>) -> Result<(), Str
 #[tauri::command]
 pub fn open_in_obsidian(file: String, state: State<Arc<Shared>>) -> Result<(), String> {
     let dir = vault_dir(&state)?;
-    let name = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .ok_or("invalid vault path")?;
+    let name = vault_name(&dir)?;
     let target = file.trim_end_matches(".md");
     let uri = format!("obsidian://open?vault={}&file={}", percent_encode(&name), percent_encode(target));
     crate::platform::open_uri(&uri)

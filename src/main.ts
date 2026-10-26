@@ -17,7 +17,7 @@ const store: Store = {
   settings: {
     vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, theme: "postie", mini: false,
     telegramToken: "", telegramChatId: "", remoteView: false, remoteToken: "", slackWebhook: "", feishuWebhook: "", language: "auto",
-    activity: 50,
+    activity: 50, obsidianFavorites: [],
   },
   pets: [],
   usage: null,
@@ -151,6 +151,8 @@ const folder = (path: string | null | undefined) => (path ?? "").split(/[\\/]/).
 
 void on<Session[]>("sessions", (sessions) => {
   store.sessions = sessions;
+  // Every session gets its own child, unless the user sent that one away.
+  store.children.ensure(sessions.map((s) => s.id));
   followers.sync(sessions, store.children);
   ui.refresh();
   updateMood();

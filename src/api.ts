@@ -18,7 +18,21 @@ export interface Settings {
   language: string;
   /** 0 = sleepy, 100 = hyperactive. */
   activity: number;
+  /** Obsidian palette commands shown as buttons (run through Obsidian's CLI). */
+  obsidianFavorites: ObsidianFavorite[];
 }
+
+export interface ObsidianFavorite {
+  id: string;
+  label: string;
+}
+
+export interface ObsidianCommand {
+  id: string;
+  name: string;
+}
+
+export type ObsidianAction = "daily" | "search" | "new" | "choose-vault";
 
 export interface PetInfo {
   id: string;
@@ -148,6 +162,9 @@ export const api = {
   detectVaults: () => invoke<string[]>("detect_vaults"),
   scanVault: () => invoke<VaultTask[]>("scan_vault"),
   vaultAddTask: (text: string) => invoke("vault_add_task", { text }),
+  obsidianUri: (action: ObsidianAction, text?: string) => invoke("obsidian_uri", { action, text }),
+  obsidianCommands: () => invoke<ObsidianCommand[]>("obsidian_commands"),
+  obsidianRunCommand: (id: string) => invoke("obsidian_run_command", { id }),
   focusSession: (cwd: string) => invoke<boolean>("focus_session", { cwd }),
   installTheme: (url: string) => invoke<CustomTheme>("install_theme", { url }),
   importPet: (folder: string) => invoke<PetInfo>("import_pet", { folder }),

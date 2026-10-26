@@ -22,6 +22,7 @@ Objetivo original: «un MVP con una mascota que se mueve por la pantalla, con f�
 | 12 | Otros agentes: puentes Gemini/Cursor/Codex y endpoint `/agent` | Cargas de ejemplo según su documentación contra la app real |
 | 13 | Responder preguntas de Claude y aprobar planes desde el panel de la sesión; sesiones recientes; *Reintentar* en tareas fallidas | Tests unitarios y vista previa con `mockIPC`; **no** probado con un `claude` real |
 | 14 | Diagnóstico de hooks: *Ver eventos recibidos* en Ajustes > Claude > Conexión (recuento por evento, últimas líneas, aviso si nunca llega `PermissionRequest`) | Tests unitarios (solo nombres, tope de 80 eventos) y vista previa con `mockIPC`; **no** probado con eventos reales de Claude Desktop |
+| 15 | Obsidian: acciones rápidas (nota diaria, buscar, nota nueva por URI `obsidian://`) y comandos favoritos de la paleta por la CLI oficial; elegir vault con filtro | Tests unitarios (parser de comandos, URIs, validación de ids, tope de favoritos, runner); vista previa con `mockIPC`; **no** probado con Obsidian real ni con su CLI |
 
 ## Fuera del MVP (decidido, no olvidado)
 
@@ -43,7 +44,8 @@ Estas comprobaciones no se pueden hacer sin tu sesión y tu equipo:
 7. Que Claude Code acepte las respuestas a `AskUserQuestion` (`updatedInput.answers`) y que la aprobación de `ExitPlanMode` se comporte como se espera.
 8. Que las sesiones de Claude Desktop envíen el hook `PermissionRequest` (el diagnóstico *Ver eventos recibidos* en Ajustes > Claude > Conexión permite comprobar qué eventos llegan).
 9. La sección *Recientes* con un historial real grande, y *Reintentar* con un `claude` real.
+10. Las acciones de Obsidian en una Obsidian real: los atajos `obsidian://` y los comandos favoritos con la CLI oficial (`obsidian vault=<nombre> command id=<id>`, Obsidian 1.12.7+). El formato de `obsidian commands` es una suposición; solo hay tests unitarios.
 
 Telegram y Slack no responden preguntas ni planes (Telegram muestra Permitir/Denegar); eso queda para el escritorio.
 
-Si alguno falla, abre un issue con el síntoma: los puntos 1–9 son los candidatos más probables a necesitar un ajuste.
+Si alguno falla, abre un issue con el síntoma: los puntos 1–10 son los candidatos más probables a necesitar un ajuste.

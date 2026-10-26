@@ -9,10 +9,13 @@ export interface ChildLook extends Look {
 }
 
 const KEY = "claude-npc.children";
+const DISMISSED_KEY = "claude-npc.children-dismissed";
 const KEEP_MS = 14 * 24 * 3600_000;
 
 export class Children {
   private readonly looks = new Map<string, ChildLook>();
+  /** Sessions whose child the user sent away; they do not get a new one on their own. */
+  private readonly dismissed = new Set<string>();
   /** Called after any change, so the screen and the lists can follow. */
   onChange: () => void = () => {};
 
@@ -34,15 +37,31 @@ export class Children {
 
   /** Spawns a child for the session, in a colour no other child wears yet if there is one left. */
   add(sessionId: string) {
-    if (this.looks.has(sessionId)) return;
-    const used = new Set([...this.looks.values()].map((l) => l.hue));
-    const hue = HUES.find((h) => !used.has(h)) ?? HUES[this.looks.size % HUES.length];
-    this.looks.set(sessionId, { hue, hat: "none", created: Date.now() });
-    this.changed();
+    this.dismissed.delete(sessionId);
+    if (this.spawn(sessionId)) this.changed();
+  }
+
+  /** Makes sure every given session has a child, except those the user sent away. */
+  ensure(sessionIds: string[]) {
+    let any = false;
+    for (const id of sessionIds) {
+      if (!this.dismissed.has(id) && this.spawn(id)) any = true;
+    }
+    if (any) this.changed();
   }
 
   remove(sessionId: string) {
-    if (this.looks.delete(sessionId)) this.changed();
+    this.dismissed.add(sessionId);
+    this.looks.delete(sessionId);
+    this.changed();
+  }
+
+  private spawn(sessionId: string): boolean {
+    if (this.looks.has(sessionId)) return false;
+    const used = new Set([...this.looks.values()].map((l) => l.hue));
+    const hue = HUES.find((h) => !used.has(h)) ?? HUES[this.looks.size % HUES.length];
+    this.looks.set(sessionId, { hue, hat: "none", created: Date.now() });
+    return true;
   }
 
   setLook(sessionId: string, patch: { hue?: number; hat?: HatId }) {
@@ -59,6 +78,8 @@ export class Children {
 
   private load() {
     try {
+      const gone = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
+      if (Array.isArray(gone)) for (const id of gone) if (typeof id === "string") this.dismissed.add(id);
       const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<string, ChildLook>;
       const now = Date.now();
       for (const [id, look] of Object.entries(raw)) {
@@ -74,6 +95,7 @@ export class Children {
   private save() {
     try {
       localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(this.looks)));
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify([...this.dismissed].slice(-200)));
     } catch {
       // Not being able to remember them is not worth an error.
     }

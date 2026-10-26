@@ -2,6 +2,7 @@ pub mod bridge;
 mod history;
 mod hooks;
 mod notify;
+mod obsidian;
 mod pets;
 mod platform;
 mod remote;
@@ -75,6 +76,7 @@ fn update_settings(settings: Settings, state: State<Arc<Shared>>) -> Result<Sett
         // The hook port is baked into the installed hooks, and the phone token is only
         // ever generated here, so neither can be changed from the UI.
         let mut merged = Settings { port: current.port, remote_token: current.remote_token.clone(), ..settings };
+        merged.obsidian_favorites = obsidian::clean_favorites(merged.obsidian_favorites);
         if merged.remote_view && merged.remote_token.is_empty() {
             merged.remote_token = remote::new_token();
         }
@@ -268,6 +270,9 @@ pub fn run() {
             vault::scan_vault,
             vault::vault_add_task,
             vault::open_in_obsidian,
+            obsidian::obsidian_uri,
+            obsidian::obsidian_commands,
+            obsidian::obsidian_run_command,
         ])
         .setup(move |app| {
             let config_path = app.path().app_config_dir()?.join("settings.json");

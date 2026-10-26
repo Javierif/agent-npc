@@ -8,7 +8,7 @@ import type { Bounds } from "./npc";
 import { PET_CELL_H, PET_CELL_W, type PetSheet } from "./petsprite";
 import { renderPose, SPRITE_H, SPRITE_W, type Pose } from "./sprite";
 
-const MAX_VISIBLE = 5;
+const MAX_VISIBLE = 8;
 const GAP = 4; // px between neighbours in the line
 const FOLLOW_RATE = 3.2; // 1/s; lower trails further behind
 const BODY_ROWS = 15;

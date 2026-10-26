@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const log: Array<{ cmd: string; args: unknown }> = [];
-let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50 };
+let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50, obsidianFavorites: [{ id: "daily-notes:open", label: "Nota diaria" }] };
 let hooks = false;
 
 mockIPC((cmd, args) => {
@@ -17,6 +17,14 @@ mockIPC((cmd, args) => {
     case "uninstall_hooks": hooks = false; return null;
     case "scan_vault": return [{ file: "Ideas/proyecto.md", line: 4, text: "Resumir las notas de la reunión" }];
     case "detect_vaults": return ["C:/Users/demo/Notes"];
+    case "obsidian_uri": return null;
+    case "obsidian_run_command": return null;
+    case "obsidian_commands": return [
+      { id: "daily-notes:open", name: "Daily notes: Open today's daily note" },
+      { id: "switcher:open", name: "Quick switcher: Open quick switcher" },
+      { id: "app:open-settings", name: "Open settings" },
+      { id: "editor:toggle-bold", name: "Toggle bold" },
+    ];
     case "start_task": return 7;
     case "hook_log": return [
       { ms: Date.now() - 2_000, event: "Notification", session: "aaaaaaaa", tool: null, note: "Claude needs your permission to use Bash" },

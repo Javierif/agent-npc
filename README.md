@@ -14,10 +14,10 @@ Estado: **MVP**. Probado en Windows 11; macOS y Linux están escritos pero sin p
 | Modo mini | Se acopla al borde derecho de la pantalla y se asoma; sale si hay novedades o pasas el ratón. Doble clic para activarlo o quitarlo, o desde Ajustes. |
 | Reacciona a Claude Code | Pensando, trabajando (portátil), malabares si hay subagentes, alerta si te necesita, contento al terminar, triste si algo falla. Se alimenta de los *hooks* de Claude Code. |
 | Permisos | Tarjeta junto al NPC: **Permitir / Denegar**, atajos globales `Ctrl+Alt+Y` / `Ctrl+Alt+N`, o desde Telegram. Las preguntas de Claude (`AskUserQuestion`) y los planes (`ExitPlanMode`) no van en esa tarjeta: se responden en el panel de su sesión (opciones de selección única o múltiple, «Otra respuesta…», «Enviar respuestas»; o aprobar el plan). |
-| Sesiones | Panel con todas tus sesiones (estado, herramienta actual, último mensaje). *Terminal* trae al frente la ventana de la sesión si la encuentra por el nombre de su carpeta; si no, abre un terminal que la reanuda. Al pulsar una fila (o el hijo de esa sesión, la copia pequeña del personaje que le hayas asignado) ves su detalle, con sus permisos y preguntas pendientes; *Escribir* envía un mensaje que continúa esa conversación (`claude --resume`) y se oculta mientras la sesión está trabajando. La sección *Recientes* lista las sesiones pasadas que Claude guardó en `~/.claude/projects`, sin repetir las activas. |
+| Sesiones | Panel con todas tus sesiones (estado, herramienta actual, último mensaje). *Terminal* trae al frente la ventana de la sesión si la encuentra por el nombre de su carpeta; si no, abre un terminal que la reanuda. Al pulsar una fila (o el hijo de esa sesión, la copia pequeña del personaje que nace sola con cada sesión; *Quitar hijo* la despide y no vuelve a nacer) ves su detalle, con sus permisos y preguntas pendientes; *Escribir* envía un mensaje que continúa esa conversación (`claude --resume`) y se oculta mientras la sesión está trabajando. La sección *Recientes* lista las sesiones pasadas que Claude guardó en `~/.claude/projects`, sin repetir las activas. |
 | Cuota | Anillos de uso de las ventanas de 5 h y 7 d y del contexto (ver *Cuota*). |
 | Mandar tareas | Escribes una tarea y el NPC lanza `claude -p` en la carpeta que elijas, muestra el progreso y deja el resultado como una nota adhesiva. *Continuar* en una tarea terminada bien reanuda su conversación (`claude --resume`); *Reintentar* en una fallida reenvía el mismo prompt, carpeta y sesión. Las respuestas se muestran con Markdown básico (títulos, listas, código, tablas, enlaces), sin HTML. |
-| Obsidian | Apunta a tu vault. Cualquier `- [ ] algo #claude` de tus notas aparece en el panel; con ▶ Claude lo hace y **escribe la respuesta bajo la tarea y la marca como hecha**. También puedes añadir tareas desde el NPC a una bandeja (`Claude NPC Inbox.md`). Funciona sobre los archivos, sin plugin. |
+| Obsidian | Apunta a tu vault. Cualquier `- [ ] algo #claude` de tus notas aparece en el panel; con ▶ Claude lo hace y **escribe la respuesta bajo la tarea y la marca como hecha**. También puedes añadir tareas desde el NPC a una bandeja (`Claude NPC Inbox.md`). Funciona sobre los archivos, sin plugin. Además, el panel tiene botones para la nota diaria, buscar y crear una nota nueva (por URI `obsidian://`), y hasta 6 comandos favoritos de Obsidian que se ejecutan con su CLI oficial (ver *Obsidian*). |
 | Otros agentes | Puentes para Gemini CLI, Cursor y Codex, y un endpoint HTTP genérico (`/agent`) para cualquier otra herramienta (ver más abajo). |
 | Aprobar desde Telegram | Cada petición de permiso llega al bot con botones Permitir/Denegar. |
 | Avisos en Slack y Feishu | Notificación cuando se pide un permiso y cuando una sesión termina. |
@@ -43,6 +43,13 @@ Si una sesión no te muestra tarjetas de permiso (por ejemplo, una de Claude Des
 ### Obsidian
 
 En **Obsidian**, elige tu vault (se detectan los que Obsidian tiene registrados) o escribe la ruta. Las tareas lanzadas desde una nota se ejecutan con la vault como directorio de trabajo.
+
+En el mismo panel:
+
+- **Nota diaria**, **Buscar** y **Nota nueva** abren Obsidian con una URI `obsidian://`. *Buscar* y *Nota nueva* usan el texto del cuadro (*Nota nueva* no crea nada si está vacío).
+- **★** elige hasta 6 comandos de la paleta de Obsidian como botones (por ejemplo, abrir la nota diaria). Se ejecutan con la CLI oficial de Obsidian (`obsidian vault=<tu vault> command id=<id>`), que requiere **Obsidian 1.12.7 o superior** con la CLI activada en Obsidian; en Windows el NPC usa `Obsidian.com`. Solo se ejecutan los comandos que hayas guardado como favoritos, con un tiempo máximo de 10 s.
+
+Si la CLI no está instalada o no responde en 10 s, el NPC muestra el error.
 
 ### Cuota
 
@@ -146,13 +153,14 @@ curl -X POST http://127.0.0.1:47650/agent -d '{"agent":"codex","session_id":"1",
 - El servidor de hooks escucha solo en `127.0.0.1` y no lleva token: cualquier proceso local puede enviarle eventos (puede mostrar tarjetas falsas, pero no aprobar nada: las decisiones solo salen hacia el agente que preguntó).
 - Los tokens de Telegram y las URL de webhooks se guardan en texto plano en la configuración de la app.
 - Al escribir en una nota, si cambió mientras Claude trabajaba, se vuelve a localizar la tarea por su texto; si ya no está, no se escribe nada.
+- Los comandos de Obsidian no pasan por una shell: solo se ejecutan los ids guardados como favoritos, validados (letras, números, `-`, `_`, `.` y `:`).
 - El diagnóstico de eventos (*Ver eventos recibidos*) vive solo en memoria y no guarda prompts ni entradas de herramientas.
 
 ## Pruebas
 
 ```bash
 npm run test:ui       # interfaz: traducciones completas y coherentes en los 5 idiomas
-npm run test          # Rust: hooks, permisos, vault, Telegram y webhooks (contra servidores simulados), puentes, vista móvil, temas, parser de claude
+npm run test          # Rust: hooks, permisos, vault, acciones de Obsidian (URIs, parser de comandos), Telegram y webhooks (contra servidores simulados), puentes, vista móvil, temas, parser de claude
 npx tsc --noEmit      # tipos del frontend
 ```
 
@@ -162,7 +170,7 @@ Para ver la interfaz sin Tauri: `npx vite` y abre `http://localhost:1420/tests/p
 
 - **En la app real de Windows** (inspeccionando su webview): el overlay se carga, el click-through se activa solo sobre el personaje, el flujo hook → tarjeta → Permitir/Denegar → respuesta HTTP, el flujo de tareas con escritura en una vault temporal, Telegram, Slack y Feishu contra servidores simulados, los puentes de Gemini, Cursor y Codex con cargas de ejemplo, los endpoints `/agent` y `/usage`, la vista del móvil en loopback, los temas (incluido uno propio), el modo mini, el seguimiento de ojos, que *Terminal* encuentra una ventana real por el nombre de la carpeta, la importación de un pet de Codex (sintético) con cada estado en la fila de animación que le toca, la instalación de un tema por URL, el cambio de idioma y su persistencia.
 - **Con un `claude` de pega** que emite el mismo JSON (`--output-format stream-json`): el runner y la reescritura de la nota. No con el modelo real: la sesión de este entorno tenía el OAuth caducado.
-- **Sin comprobar:** Don Hámster (y su chiste propio) solo se ha verificado con `tsc`, `npm run test:ui` y la vista previa con `mockIPC`; no se ha visto en la app real. Obsidian real (solo carpetas con el mismo formato), que Claude Code, Gemini CLI, Cursor y Codex reales llamen a los hooks tal como indica su documentación, la `statusLine` en una sesión viva, *Continuar* / *Escribir* (`--resume`) con un `claude` real, también sobre sesiones creadas en Claude Desktop, el login desde la NPC (*Iniciar sesión*), los atajos globales pulsados con teclado real, los bots reales de Telegram/Slack/Feishu, la vista del móvil desde un teléfono, que una sesión retomada con `--resume` siga viva durante una tarea real (la ejecución en segundo plano no debe hacerla desaparecer de *Sesiones*; arreglado, sin probar en la app), que Windows conceda el foco al traer una ventana al frente (si lo niega, parpadea en la barra de tareas), macOS y Linux.
+- **Sin comprobar:** Don Hámster (y su chiste propio) solo se ha verificado con `tsc`, `npm run test:ui` y la vista previa con `mockIPC`; no se ha visto en la app real. Obsidian real (solo carpetas con el mismo formato); los atajos *Nota diaria*, *Buscar* y *Nota nueva* (`obsidian://`) y los comandos favoritos por la CLI oficial de Obsidian (`command id=`, Obsidian 1.12.7+): solo tienen tests unitarios del parser, las URIs, la validación de ids y el runner, y el formato de `obsidian commands` es una suposición; que Claude Code, Gemini CLI, Cursor y Codex reales llamen a los hooks tal como indica su documentación, la `statusLine` en una sesión viva, *Continuar* / *Escribir* (`--resume`) con un `claude` real, también sobre sesiones creadas en Claude Desktop, el login desde la NPC (*Iniciar sesión*), los atajos globales pulsados con teclado real, los bots reales de Telegram/Slack/Feishu, la vista del móvil desde un teléfono, que una sesión retomada con `--resume` siga viva durante una tarea real (la ejecución en segundo plano no debe hacerla desaparecer de *Sesiones*; arreglado, sin probar en la app), que Windows conceda el foco al traer una ventana al frente (si lo niega, parpadea en la barra de tareas), macOS y Linux.
 - **Solo con tests unitarios y la vista previa con `mockIPC`** (no con Claude real): responder preguntas (`AskUserQuestion`, con `updatedInput.answers`) y aprobar planes (`ExitPlanMode`) desde el panel de la sesión; que las sesiones de Claude Desktop envíen el hook `PermissionRequest`; la sección *Recientes* con un historial grande; *Reintentar*; el diagnóstico *Ver eventos recibidos* con eventos reales de Claude Desktop (probado con tests unitarios y la vista previa, no con eventos reales).
 
 ## Alcance frente a clawd-on-desk
