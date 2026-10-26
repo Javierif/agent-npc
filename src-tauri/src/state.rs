@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     process::Child,
     sync::{atomic::AtomicU64, mpsc::Sender, Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -91,13 +92,49 @@ pub struct Shared {
     pub sessions: Mutex<HashMap<String, Session>>,
     /// Pending permission requests: id -> (session id, answer channel).
     pub pending: Mutex<HashMap<u64, (String, Sender<bool>)>>,
+    /// Answers to an `AskUserQuestion` request, stored just before its allow is sent: id -> `{question: answer}`.
+    pub answers: Mutex<HashMap<u64, serde_json::Value>>,
     pub tasks: Mutex<HashMap<u64, Child>>,
+    /// Sessions a headless `claude -p --resume` run is working in: the `SessionEnd` of that run is not the user's.
+    pub headless: Mutex<HashMap<String, Headless>>,
     pub next_id: AtomicU64,
     pub usage: Mutex<Option<Usage>>,
     pub remote: Mutex<Option<Arc<tiny_http::Server>>>,
 }
 
+/// Background runs in one session, and until when its trailing hook events still count as theirs.
+#[derive(Default, Debug)]
+pub struct Headless {
+    pub running: u32,
+    pub until: Option<Instant>,
+}
+
+/// The run's own `SessionEnd` can land a moment after it is reported finished.
+const HEADLESS_GRACE: Duration = Duration::from_secs(5);
+
 impl Shared {
+    /// A headless run started in `session`.
+    pub fn begin_headless(&self, session: &str) {
+        self.headless.lock().unwrap().entry(session.to_string()).or_default().running += 1;
+    }
+
+    /// A headless run in `session` finished (or was cancelled).
+    pub fn end_headless(&self, session: &str) {
+        let mut map = self.headless.lock().unwrap();
+        if let Some(entry) = map.get_mut(session) {
+            entry.running = entry.running.saturating_sub(1);
+            entry.until = Some(Instant::now() + HEADLESS_GRACE);
+        }
+    }
+
+    /// Whether hook events of `session` currently come from a background run, so its end must not remove it.
+    pub fn is_headless(&self, session: &str) -> bool {
+        let mut map = self.headless.lock().unwrap();
+        let now = Instant::now();
+        map.retain(|_, h| h.running > 0 || h.until.is_some_and(|until| until > now));
+        map.contains_key(session)
+    }
+
     pub fn new(config_path: PathBuf) -> Self {
         let settings = load_settings(&config_path);
         Self {
@@ -105,7 +142,9 @@ impl Shared {
             settings: Mutex::new(settings),
             sessions: Mutex::default(),
             pending: Mutex::default(),
+            answers: Mutex::default(),
             tasks: Mutex::default(),
+            headless: Mutex::default(),
             next_id: AtomicU64::new(1),
             usage: Mutex::new(None),
             remote: Mutex::new(None),
@@ -128,4 +167,35 @@ pub struct Usage {
     pub seven_day: Option<Quota>,
     pub context_pct: Option<f64>,
     pub updated_ms: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shared() -> Shared {
+        Shared::new(std::env::temp_dir().join("claude-npc-state-test.json"))
+    }
+
+    #[test]
+    fn a_session_is_headless_while_a_background_run_uses_it() {
+        let shared = shared();
+        assert!(!shared.is_headless("s1"));
+        shared.begin_headless("s1");
+        shared.begin_headless("s1"); // two runs at once
+        shared.end_headless("s1");
+        assert!(shared.is_headless("s1"), "one run is still going");
+        assert!(!shared.is_headless("other"), "other sessions are not affected");
+    }
+
+    #[test]
+    fn the_trailing_session_end_of_a_finished_run_is_still_covered() {
+        let shared = shared();
+        shared.begin_headless("s1");
+        shared.end_headless("s1");
+        assert!(shared.is_headless("s1"), "within the grace period");
+        shared.headless.lock().unwrap().get_mut("s1").unwrap().until = Some(Instant::now() - Duration::from_secs(1));
+        assert!(!shared.is_headless("s1"), "after it, a real SessionEnd counts again");
+        assert!(shared.headless.lock().unwrap().is_empty(), "expired entries are dropped");
+    }
 }

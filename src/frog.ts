@@ -85,6 +85,7 @@ export const FROG: Character = {
     n: "#34479f", N: "#232e78", w: "#f4f1e6", r: "#d9453b", b: "#86a043",
   },
   arm: "n",
+  tint: ["n", "N"],
   tear: [3, 3],
   mouthAt: [8, 5],
   cheek: [2, 12, 3],

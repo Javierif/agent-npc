@@ -59,12 +59,32 @@ export interface Session {
   updatedMs: number;
 }
 
+/** A past session found in the CLI's transcript history (not necessarily running). */
+export interface RecentSession {
+  id: string;
+  cwd: string;
+  title: string | null;
+  updatedMs: number;
+}
+
+/** One question of Claude's `AskUserQuestion` tool. */
+export interface Question {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: Array<{ label: string; description?: string }>;
+}
+
 export interface PermissionRequest {
   id: number;
   sessionId: string;
   cwd: string | null;
   tool: string;
   detail: string;
+  /** Set when the request is a question with options to pick from. */
+  questions?: Question[] | null;
+  /** Set when the request is Claude asking to leave plan mode with this plan. */
+  plan?: string | null;
 }
 
 export interface VaultTask {
@@ -85,6 +105,8 @@ export interface TaskUpdate {
   id: number;
   kind: "start" | "text" | "tool" | "session" | "result";
   sessionId?: string;
+  /** On `start`: the session the task continues, if any. */
+  resume?: string | null;
   text?: string;
   tool?: string;
   ok?: boolean;
@@ -102,12 +124,17 @@ export const api = {
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
   openTerminal: (cwd: string, sessionId?: string) => invoke("open_terminal", { cwd, sessionId }),
   resolvePermission: (id: number, allow: boolean) => invoke<boolean>("resolve_permission", { id, allow }),
+  /** Answers a question request; `answers` maps each question's text to the chosen label(s). */
+  answerQuestion: (id: number, answers: Record<string, string>) => invoke<boolean>("answer_question", { id, answers }),
   hooksInstalled: () => invoke<boolean>("hooks_installed"),
   installHooks: () => invoke("install_hooks"),
   uninstallHooks: () => invoke("uninstall_hooks"),
   startTask: (prompt: string, cwd?: string, vault?: VaultTask, resume?: string) =>
     invoke<number>("start_task", { task: { prompt, cwd: cwd ?? null, vault: vault ?? null, resume: resume ?? null } }),
   cancelTask: (id: number) => invoke<boolean>("cancel_task", { id }),
+  authStatus: () => invoke<boolean>("auth_status"),
+  authLogin: () => invoke("auth_login"),
+  recentSessions: () => invoke<RecentSession[]>("recent_sessions"),
   detectVaults: () => invoke<string[]>("detect_vaults"),
   scanVault: () => invoke<VaultTask[]>("scan_vault"),
   vaultAddTask: (text: string) => invoke("vault_add_task", { text }),

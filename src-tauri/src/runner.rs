@@ -43,6 +43,28 @@ fn claude_command() -> Command {
     cmd
 }
 
+/// Reads the JSON that `claude auth status` prints; anything unparsable counts as signed out.
+fn parse_auth_status(stdout: &str) -> bool {
+    serde_json::from_str::<Value>(stdout.trim())
+        .map(|v| v["loggedIn"].as_bool().unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// Whether the `claude` CLI that tasks run through is signed in (Claude Desktop has its own login).
+#[tauri::command]
+pub async fn auth_status() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = claude_command()
+            .args(["auth", "status"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not start `claude` (is it installed and on PATH?): {e}"))?;
+        Ok(parse_auth_status(&String::from_utf8_lossy(&output.stdout)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn resolve_dir(shared: &Shared, requested: Option<String>, vault: bool) -> Result<PathBuf, String> {
     let settings = shared.settings.lock().unwrap().clone();
     let candidates = if vault {
@@ -74,8 +96,9 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
     if allow_edits {
         cmd.args(["--permission-mode", "acceptEdits"]);
     }
-    if let Some(session) = task.resume.as_deref().map(str::trim).filter(|s| is_session_id(s)) {
-        cmd.args(["--resume", session]);
+    let resumed: Option<String> = task.resume.as_deref().map(str::trim).filter(|s| is_session_id(s)).map(str::to_string);
+    if let Some(session) = &resumed {
+        cmd.args(["--resume", session.as_str()]);
     }
     cmd.current_dir(&dir)
         .stdin(Stdio::piped())
@@ -90,10 +113,14 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
     let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
     shared.tasks.lock().unwrap().insert(id, child);
+    // The run reports its own hook events under the session's id, SessionEnd included.
+    if let Some(session) = &resumed {
+        shared.begin_headless(session);
+    }
 
     let _ = app.emit(
         "task-update",
-        json!({ "id": id, "kind": "start", "text": prompt, "cwd": dir.to_string_lossy(), "vault": task.vault }),
+        json!({ "id": id, "kind": "start", "text": prompt, "cwd": dir.to_string_lossy(), "vault": task.vault, "resume": task.resume }),
     );
 
     // The prompt goes through stdin so quoting never matters.
@@ -138,6 +165,9 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
             }
         }
 
+        if let Some(session) = &resumed {
+            shared.end_headless(session);
+        }
         // `cancel_task` removes (and kills) the child; if it is still here the run ended on its own.
         let child = shared.tasks.lock().unwrap().remove(&id);
         let cancelled = child.is_none();
@@ -246,6 +276,14 @@ mod tests {
     fn captures_session_id_from_init() {
         let init = json!({"type":"system","subtype":"init","session_id":"abc-123"});
         assert!(matches!(&parse_event(&init)[..], [Parsed::Session(id)] if id == "abc-123"));
+    }
+
+    #[test]
+    fn reads_the_login_state() {
+        assert!(parse_auth_status(r#"{"loggedIn": true, "authMethod": "claude.ai"}"#));
+        assert!(!parse_auth_status(r#"{"loggedIn": false, "authMethod": "none"}"#));
+        assert!(!parse_auth_status("Not logged in"));
+        assert!(!parse_auth_status(""));
     }
 
     #[test]

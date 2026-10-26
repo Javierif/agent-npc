@@ -29,6 +29,8 @@ const HOOK_EVENTS: [&str; 11] = [
     "SubagentStop",
 ];
 const PERMISSION_WAIT_SECS: u64 = 280;
+/// Longest reply kept per session, enough to read a whole answer in the session popup.
+const MAX_MESSAGE_CHARS: usize = 3000;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -237,12 +239,17 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
         .as_deref()
         .map(|t| summarize_input(t, &payload["tool_input"]))
         .filter(|d| !d.is_empty());
-    let last_message = payload["last_assistant_message"].as_str().map(|m| truncate(m, 600));
+    let last_message = payload["last_assistant_message"].as_str().map(|m| truncate(m, MAX_MESSAGE_CHARS));
+
+    // A background `claude -p --resume` run ends with its own SessionEnd; the session itself lives on.
+    let ended = event == "SessionEnd" && !shared.is_headless(&sid);
 
     {
         let mut sessions = shared.sessions.lock().unwrap();
         if event == "SessionEnd" {
-            sessions.remove(&sid);
+            if ended {
+                sessions.remove(&sid);
+            }
         } else if !event.is_empty() {
             let session = sessions.entry(sid.clone()).or_insert_with(|| Session {
                 id: sid.clone(),
@@ -304,7 +311,7 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
     }
     let snapshot = snapshot(shared);
 
-    if matches!(event, "PostToolUse" | "PostToolUseFailure" | "Stop" | "SessionEnd") {
+    if ended || matches!(event, "PostToolUse" | "PostToolUseFailure" | "Stop") {
         // The terminal (or a timeout) answered; drop stale permission cards for this session.
         let stale: Vec<u64> = shared
             .pending
@@ -339,6 +346,14 @@ fn decision(allow: bool) -> Value {
     json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } })
 }
 
+/// Allows an `AskUserQuestion` call with the user's choices filled in (`answers`: question text -> chosen label).
+fn decision_with_answers(input: &Value, answers: Value) -> Value {
+    let mut updated = input.clone();
+    updated["answers"] = answers;
+    json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest",
+        "decision": { "behavior": "allow", "updatedInput": updated } } })
+}
+
 fn permission(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
     let emit = |event: &str, payload: Value| {
         if event == "permission-request" {
@@ -352,7 +367,9 @@ fn permission(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
 
 /// Registers the request, tells the UI, and blocks until it is answered or `wait` runs out.
 fn hold_permission(emit: &dyn Fn(&str, Value), shared: &Shared, payload: &Value, wait: Duration) -> Value {
-    if shared.settings.lock().unwrap().auto_approve {
+    let tool = payload["tool_name"].as_str().unwrap_or("tool");
+    // A question needs a person's answer: approving it blindly would send it back empty.
+    if shared.settings.lock().unwrap().auto_approve && tool != "AskUserQuestion" {
         return decision(true);
     }
     let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
@@ -360,7 +377,7 @@ fn hold_permission(emit: &dyn Fn(&str, Value), shared: &Shared, payload: &Value,
     let (tx, rx) = mpsc::channel();
     shared.pending.lock().unwrap().insert(id, (sid.clone(), tx));
 
-    let tool = payload["tool_name"].as_str().unwrap_or("tool");
+    let input = &payload["tool_input"];
     emit(
         "permission-request",
         json!({
@@ -368,17 +385,24 @@ fn hold_permission(emit: &dyn Fn(&str, Value), shared: &Shared, payload: &Value,
             "sessionId": sid,
             "cwd": payload["cwd"],
             "tool": tool,
-            "detail": summarize_input(tool, &payload["tool_input"]),
+            "detail": summarize_input(tool, input),
+            // Lets the NPC show the options of a question, or the plan to approve.
+            "questions": if tool == "AskUserQuestion" { input["questions"].clone() } else { Value::Null },
+            "plan": if tool == "ExitPlanMode" { json!(input["plan"].as_str().map(|p| truncate(p, 4000))) } else { Value::Null },
         }),
     );
 
     let answer = rx.recv_timeout(wait);
     shared.pending.lock().unwrap().remove(&id);
+    let answers = shared.answers.lock().unwrap().remove(&id);
     // Whoever answered (card, hotkey, Telegram) or however it ended, the card must go away.
     emit("permission-done", json!(id));
-    match answer {
-        Ok(allow) => decision(allow),
-        Err(_) => json!({}),
+    match (answer, answers) {
+        (Ok(true), Some(answers)) => decision_with_answers(input, answers),
+        // A bare "allow" (hotkey, Telegram) has no answers to give: let the terminal ask as usual.
+        (Ok(true), None) if tool == "AskUserQuestion" => json!({}),
+        (Ok(allow), _) => decision(allow),
+        (Err(_), _) => json!({}),
     }
 }
 
@@ -393,6 +417,21 @@ pub fn resolve(shared: &Shared, id: u64, allow: bool) -> bool {
         Some((_, sender)) => sender.send(allow).is_ok(),
         None => false,
     }
+}
+
+/// Answers an `AskUserQuestion` request: allows it with the chosen options (`{question: answer}`).
+pub fn resolve_with_answers(shared: &Shared, id: u64, answers: Value) -> bool {
+    shared.answers.lock().unwrap().insert(id, answers);
+    let sent = resolve(shared, id, true);
+    if !sent {
+        shared.answers.lock().unwrap().remove(&id);
+    }
+    sent
+}
+
+#[tauri::command]
+pub fn answer_question(id: u64, answers: Value, state: State<Arc<Shared>>) -> bool {
+    resolve_with_answers(&state, id, answers)
 }
 
 #[tauri::command]
@@ -600,6 +639,66 @@ mod tests {
         let emit = |_: &str, _: Value| panic!("must not ask");
         let reply = hold_permission(&emit, &shared, &request(), Duration::from_secs(1));
         assert_eq!(reply["hookSpecificOutput"]["decision"]["behavior"], "allow");
+    }
+
+    #[test]
+    fn a_question_is_allowed_with_the_users_answers_filled_in() {
+        let shared = shared();
+        let worker = shared.clone();
+        let request = json!({ "session_id": "q1", "tool_name": "AskUserQuestion", "tool_input": {
+            "questions": [{ "question": "Which one?", "options": [{ "label": "A" }, { "label": "B" }] }] } });
+        let seen = std::sync::Mutex::new(Value::Null);
+        let handle = thread::spawn(move || {
+            let emit = |name: &str, payload: Value| {
+                if name == "permission-request" {
+                    *seen.lock().unwrap() = payload;
+                }
+            };
+            let reply = hold_permission(&emit, &worker, &request, Duration::from_secs(5));
+            (reply, seen.into_inner().unwrap())
+        });
+        while shared.pending.lock().unwrap().is_empty() && !handle.is_finished() {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(resolve_with_answers(&shared, 1, json!({ "Which one?": "B" })));
+        let (reply, event) = handle.join().unwrap();
+        assert_eq!(event["questions"][0]["question"], "Which one?", "the NPC gets the options to show");
+        let decision = &reply["hookSpecificOutput"]["decision"];
+        assert_eq!(decision["behavior"], "allow");
+        assert_eq!(decision["updatedInput"]["answers"]["Which one?"], "B");
+        assert_eq!(decision["updatedInput"]["questions"][0]["question"], "Which one?", "the original input is kept");
+        assert!(shared.answers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_bare_allow_does_not_answer_a_question() {
+        let shared = shared();
+        let worker = shared.clone();
+        let request = json!({ "session_id": "q3", "tool_name": "AskUserQuestion", "tool_input": { "questions": [] } });
+        let handle = thread::spawn(move || {
+            hold_permission(&|_: &str, _: Value| {}, &worker, &request, Duration::from_secs(5))
+        });
+        while shared.pending.lock().unwrap().is_empty() && !handle.is_finished() {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(resolve_oldest(&shared, true), Some(1), "Ctrl+Alt+Y or Telegram says yes");
+        assert_eq!(handle.join().unwrap(), json!({}), "no decision: the question stays open in the terminal");
+    }
+
+    #[test]
+    fn auto_approve_never_answers_a_question_blindly() {
+        let shared = shared();
+        shared.settings.lock().unwrap().auto_approve = true;
+        let request = json!({ "session_id": "q2", "tool_name": "AskUserQuestion", "tool_input": { "questions": [] } });
+        let asked = std::sync::atomic::AtomicBool::new(false);
+        let emit = |name: &str, _: Value| {
+            if name == "permission-request" {
+                asked.store(true, Ordering::Relaxed);
+            }
+        };
+        let reply = hold_permission(&emit, &shared, &request, Duration::from_millis(30));
+        assert!(asked.load(Ordering::Relaxed), "still asks the user");
+        assert_eq!(reply, json!({}));
     }
 
     #[test]

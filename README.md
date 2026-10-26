@@ -13,10 +13,10 @@ Estado: **MVP**. Probado en Windows 11; macOS y Linux están escritos pero sin p
 | Idiomas | Español, English, Português, Français y Deutsch; automático según el sistema, o a mano en Ajustes. |
 | Modo mini | Se acopla al borde derecho de la pantalla y se asoma; sale si hay novedades o pasas el ratón. Doble clic para activarlo o quitarlo, o desde Ajustes. |
 | Reacciona a Claude Code | Pensando, trabajando (portátil), malabares si hay subagentes, alerta si te necesita, contento al terminar, triste si algo falla. Se alimenta de los *hooks* de Claude Code. |
-| Permisos | Tarjeta junto al NPC: **Permitir / Denegar**, atajos globales `Ctrl+Alt+Y` / `Ctrl+Alt+N`, o desde Telegram. |
-| Sesiones | Panel con todas tus sesiones (estado, herramienta actual, último mensaje). *Terminal* trae al frente la ventana de la sesión si la encuentra por el nombre de su carpeta; si no, abre un terminal que la reanuda. |
+| Permisos | Tarjeta junto al NPC: **Permitir / Denegar**, atajos globales `Ctrl+Alt+Y` / `Ctrl+Alt+N`, o desde Telegram. Las preguntas de Claude (`AskUserQuestion`) y los planes (`ExitPlanMode`) no van en esa tarjeta: se responden en el panel de su sesión (opciones de selección única o múltiple, «Otra respuesta…», «Enviar respuestas»; o aprobar el plan). |
+| Sesiones | Panel con todas tus sesiones (estado, herramienta actual, último mensaje). *Terminal* trae al frente la ventana de la sesión si la encuentra por el nombre de su carpeta; si no, abre un terminal que la reanuda. Al pulsar una fila (o la rana hija de esa sesión) ves su detalle, con sus permisos y preguntas pendientes; *Escribir* envía un mensaje que continúa esa conversación (`claude --resume`) y se oculta mientras la sesión está trabajando. La sección *Recientes* lista las sesiones pasadas que Claude guardó en `~/.claude/projects`, sin repetir las activas. |
 | Cuota | Anillos de uso de las ventanas de 5 h y 7 d y del contexto (ver *Cuota*). |
-| Mandar tareas | Escribes una tarea y el NPC lanza `claude -p` en la carpeta que elijas, muestra el progreso y deja el resultado como una nota adhesiva. |
+| Mandar tareas | Escribes una tarea y el NPC lanza `claude -p` en la carpeta que elijas, muestra el progreso y deja el resultado como una nota adhesiva. *Continuar* en una tarea terminada bien reanuda su conversación (`claude --resume`); *Reintentar* en una fallida reenvía el mismo prompt, carpeta y sesión. |
 | Obsidian | Apunta a tu vault. Cualquier `- [ ] algo #claude` de tus notas aparece en el panel; con ▶ Claude lo hace y **escribe la respuesta bajo la tarea y la marca como hecha**. También puedes añadir tareas desde el NPC a una bandeja (`Claude NPC Inbox.md`). Funciona sobre los archivos, sin plugin. |
 | Otros agentes | Puentes para Gemini CLI, Cursor y Codex, y un endpoint HTTP genérico (`/agent`) para cualquier otra herramienta (ver más abajo). |
 | Aprobar desde Telegram | Cada petición de permiso llega al bot con botones Permitir/Denegar. |
@@ -25,7 +25,7 @@ Estado: **MVP**. Probado en Windows 11; macOS y Linux están escritos pero sin p
 
 ## Uso
 
-Requisitos: Node 20+, Rust, WebView2 y `claude` en el PATH con sesión iniciada.
+Requisitos: Node 20+, Rust, WebView2 y `claude` en el PATH con sesión iniciada. Si `claude` no tiene sesión, el NPC lo avisa y ofrece *Iniciar sesión*, que abre una terminal con `claude auth login`.
 
 ```bash
 npm install
@@ -62,6 +62,8 @@ Pensado para bash (Git Bash en Windows). Solo hay datos de cuota con suscripció
 3. Pégalos en **Ajustes → Aprobar desde Telegram**.
 
 Solo se atienden los botones pulsados desde ese chat. El token se guarda en texto plano en la carpeta de configuración de la app.
+
+Telegram solo aprueba o deniega permisos. Las preguntas de Claude (`AskUserQuestion`) y los planes (`ExitPlanMode`) no se contestan desde Telegram: sus peticiones muestran Permitir/Denegar, así que para responderlas de verdad usa el panel de la sesión en el escritorio.
 
 ### Slack y Feishu
 
@@ -138,7 +140,7 @@ curl -X POST http://127.0.0.1:47650/agent -d '{"agent":"codex","session_id":"1",
 ## Seguridad
 
 - Las tareas lanzadas desde el NPC solo pueden leer (`Read`, `Glob`, `Grep`, `LS`) salvo que actives *Permitir que Claude edite archivos*. Cualquier otra herramienta pasa por la tarjeta de permisos si los hooks están conectados; si no, se deniega.
-- *Aprobar permisos automáticamente* responde “Permitir” a todo. Está desactivado por defecto.
+- *Aprobar permisos automáticamente* responde “Permitir” a todo, salvo a las preguntas de Claude (`AskUserQuestion`), que siempre se muestran para que contestes tú. Está desactivado por defecto.
 - El servidor de hooks escucha solo en `127.0.0.1` y no lleva token: cualquier proceso local puede enviarle eventos (puede mostrar tarjetas falsas, pero no aprobar nada: las decisiones solo salen hacia el agente que preguntó).
 - Los tokens de Telegram y las URL de webhooks se guardan en texto plano en la configuración de la app.
 - Al escribir en una nota, si cambió mientras Claude trabajaba, se vuelve a localizar la tarea por su texto; si ya no está, no se escribe nada.
@@ -157,7 +159,8 @@ Para ver la interfaz sin Tauri: `npx vite` y abre `http://localhost:1420/tests/p
 
 - **En la app real de Windows** (inspeccionando su webview): el overlay se carga, el click-through se activa solo sobre el personaje, el flujo hook → tarjeta → Permitir/Denegar → respuesta HTTP, el flujo de tareas con escritura en una vault temporal, Telegram, Slack y Feishu contra servidores simulados, los puentes de Gemini, Cursor y Codex con cargas de ejemplo, los endpoints `/agent` y `/usage`, la vista del móvil en loopback, los temas (incluido uno propio), el modo mini, el seguimiento de ojos, que *Terminal* encuentra una ventana real por el nombre de la carpeta, la importación de un pet de Codex (sintético) con cada estado en la fila de animación que le toca, la instalación de un tema por URL, el cambio de idioma y su persistencia.
 - **Con un `claude` de pega** que emite el mismo JSON (`--output-format stream-json`): el runner y la reescritura de la nota. No con el modelo real: la sesión de este entorno tenía el OAuth caducado.
-- **Sin comprobar:** Obsidian real (solo carpetas con el mismo formato), que Claude Code, Gemini CLI, Cursor y Codex reales llamen a los hooks tal como indica su documentación, la `statusLine` en una sesión viva, los atajos globales pulsados con teclado real, los bots reales de Telegram/Slack/Feishu, la vista del móvil desde un teléfono, que Windows conceda el foco al traer una ventana al frente (si lo niega, parpadea en la barra de tareas), macOS y Linux.
+- **Sin comprobar:** Obsidian real (solo carpetas con el mismo formato), que Claude Code, Gemini CLI, Cursor y Codex reales llamen a los hooks tal como indica su documentación, la `statusLine` en una sesión viva, *Continuar* / *Escribir* (`--resume`) con un `claude` real, también sobre sesiones creadas en Claude Desktop, el login desde la NPC (*Iniciar sesión*), los atajos globales pulsados con teclado real, los bots reales de Telegram/Slack/Feishu, la vista del móvil desde un teléfono, que Windows conceda el foco al traer una ventana al frente (si lo niega, parpadea en la barra de tareas), macOS y Linux.
+- **Solo con tests unitarios y la vista previa con `mockIPC`** (no con Claude real): responder preguntas (`AskUserQuestion`, con `updatedInput.answers`) y aprobar planes (`ExitPlanMode`) desde el panel de la sesión; que las sesiones de Claude Desktop envíen el hook `PermissionRequest`; la sección *Recientes* con un historial grande; *Reintentar*.
 
 ## Alcance frente a clawd-on-desk
 

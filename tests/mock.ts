@@ -18,6 +18,14 @@ mockIPC((cmd, args) => {
     case "scan_vault": return [{ file: "Ideas/proyecto.md", line: 4, text: "Resumir las notas de la reunión" }];
     case "detect_vaults": return ["C:/Users/demo/Notes"];
     case "start_task": return 7;
+    case "answer_question": return true;
+    case "resolve_permission": return true;
+    case "auth_status": return false;
+    case "auth_login": return null;
+    case "recent_sessions": return [
+      { id: "11111111-2222-3333-4444-555555555555", cwd: "C:/Users/demo/proyecto", title: "Mejora de diseño y física del muñeco", updatedMs: Date.now() - 3_600_000 },
+      { id: "66666666-7777-8888-9999-000000000000", cwd: "C:/Users/demo/otro", title: "Sistema de cuevas y nuevo mapa", updatedMs: Date.now() - 86_400_000 },
+    ];
     default: return null;
   }
 }, { shouldMockEvents: true });

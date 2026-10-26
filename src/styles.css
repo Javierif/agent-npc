@@ -73,6 +73,60 @@ body {
   transform: none;
 }
 
+/* Tail pointing at whoever speaks: ::before is the outline, ::after the paper-coloured fill. */
+.bubble::before,
+.bubble::after {
+  content: "";
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: solid transparent;
+}
+
+.bubble.from-below::before {
+  left: var(--tail, 20px);
+  bottom: -12px;
+  margin-left: -8px;
+  border-width: 10px 8px 0;
+  border-top-color: var(--ink);
+}
+
+.bubble.from-below::after {
+  left: var(--tail, 20px);
+  bottom: -7px;
+  margin-left: -6px;
+  border-width: 8px 6px 0;
+  border-top-color: var(--paper);
+}
+
+.bubble.from-left::before {
+  left: -12px;
+  bottom: 8px;
+  border-width: 8px 10px 8px 0;
+  border-right-color: var(--ink);
+}
+
+.bubble.from-left::after {
+  left: -7px;
+  bottom: 10px;
+  border-width: 6px 8px 6px 0;
+  border-right-color: var(--paper);
+}
+
+.bubble.from-right::before {
+  right: -12px;
+  bottom: 8px;
+  border-width: 8px 0 8px 10px;
+  border-left-color: var(--ink);
+}
+
+.bubble.from-right::after {
+  right: -7px;
+  bottom: 10px;
+  border-width: 6px 0 6px 8px;
+  border-left-color: var(--paper);
+}
+
 /* ---- stack above the character ---- */
 .stack {
   position: absolute;
@@ -93,8 +147,9 @@ body {
 
 .fan {
   display: flex;
+  align-items: flex-start;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.15s, transform 0.15s;
@@ -118,6 +173,18 @@ body {
   box-shadow: 2px 2px 0 var(--ink);
   cursor: pointer;
   transition: transform 0.1s;
+}
+
+/* An arch around the character: the middle buttons sit highest and the outer ones curve down towards its sides.
+   Margins (not transforms) keep the lowered buttons inside the fan's click area. */
+.fan-btn:nth-child(1),
+.fan-btn:nth-child(4) {
+  margin-top: 16px;
+}
+
+.fan-btn:nth-child(2),
+.fan-btn:nth-child(3) {
+  margin-top: 2px;
 }
 
 .fan-btn:hover {
@@ -290,6 +357,13 @@ kbd {
   cursor: pointer;
 }
 
+.section-label {
+  margin-top: 4px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .item-actions {
   display: flex;
   flex: none;
@@ -339,6 +413,57 @@ kbd {
   animation: pop 0.2s ease-out;
 }
 
+.sticky.straight {
+  transform: none;
+}
+
+.perm.inline {
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: #ffe9d6;
+}
+
+.plan {
+  max-height: 160px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.question {
+  margin-bottom: 8px;
+}
+
+.q-text {
+  margin-bottom: 4px;
+}
+
+.q-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.q-opt {
+  padding: 3px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.q-opt.on {
+  background: #b8e8c8;
+  font-weight: 700;
+}
+
 .perm-head {
   margin-bottom: 6px;
   font-weight: 700;
@@ -378,6 +503,100 @@ kbd {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* Rendered Markdown (replies of Claude) */
+.sticky-body.rich {
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 7px;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 7px;
+  padding-left: 20px;
+}
+
+.md li {
+  margin-bottom: 2px;
+}
+
+.md-h {
+  margin: 8px 0 4px;
+  font-weight: 700;
+}
+
+.md-h1 {
+  font-size: 15px;
+}
+
+.md-h2 {
+  font-size: 14px;
+}
+
+.md-h3 {
+  font-size: 13px;
+}
+
+.md-code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.7);
+  font: 11.5px Consolas, monospace;
+}
+
+.md-pre {
+  margin: 0 0 7px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.75);
+  font: 11.5px/1.35 Consolas, monospace;
+  white-space: pre;
+}
+
+.md blockquote {
+  margin: 0 0 7px;
+  padding-left: 8px;
+  border-left: 3px solid var(--ink);
+  opacity: 0.85;
+}
+
+.md hr {
+  margin: 8px 0;
+  border: 0;
+  border-top: 2px dashed var(--ink);
+  opacity: 0.4;
+}
+
+.md-table {
+  margin: 0 0 7px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.md-table th,
+.md-table td {
+  padding: 2px 6px;
+  border: 1px solid rgba(58, 40, 32, 0.4);
+  text-align: left;
+}
+
+.md-link {
+  text-decoration: underline;
+  text-decoration-style: dotted;
 }
 
 @keyframes pop {
@@ -491,4 +710,127 @@ kbd {
 .phone {
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* ---- session followers ---- */
+#followers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.follower {
+  position: absolute;
+  left: 0;
+  top: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  will-change: transform;
+  transform-origin: 50% 100%;
+}
+
+.follower canvas {
+  position: absolute;
+  left: 0;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.follower.pop {
+  animation: follower-pop 0.28s ease-out;
+}
+
+.follower.unpop {
+  animation: follower-unpop 0.26s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes follower-pop {
+  from { scale: 0.2; opacity: 0; }
+  70% { scale: 1.15; opacity: 1; }
+  to { scale: 1; }
+}
+
+@keyframes follower-unpop {
+  to { scale: 0.2; opacity: 0; }
+}
+
+.follower-tag,
+.follower-more {
+  position: absolute;
+  padding: 1px 6px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.follower-tag {
+  left: 50%;
+  bottom: calc(100% + 12px);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.follower:hover .follower-tag {
+  opacity: 1;
+}
+
+.follower-more {
+  left: 0;
+  top: 0;
+}
+
+/* ---- child customization ---- */
+.item.design {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  background: var(--paper);
+}
+
+.swatches,
+.hats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch.on {
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
+}
+
+.hat {
+  padding: 2px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.hat.on {
+  background: #fff;
+  border-color: var(--ink);
+}
+
+.hat canvas {
+  image-rendering: pixelated;
 }

@@ -1,5 +1,8 @@
 import { api, on, type AgentEvent, type PermissionRequest, type Session, type TaskUpdate, type Usage, type VaultTask } from "./api";
 import { describeActivity } from "./activity";
+import { firstLine } from "./markdown";
+import { Children } from "./children";
+import { Followers } from "./followers";
 import { Npc, type Mood } from "./npc";
 import { PetSheet } from "./petsprite";
 import { resolveLang, setLang, t } from "./i18n";
@@ -23,6 +26,7 @@ const store: Store = {
   vaultTasks: [],
   perms: [],
   hooksInstalled: false,
+  children: new Children(),
 };
 
 let ui: Ui;
@@ -51,6 +55,10 @@ const npc = new Npc(
   },
 );
 ui = new Ui(store, npc, (text, ms) => ui.showBubble(text, ms));
+// Small copies of the character, one per active session, trailing the main one.
+const followers = new Followers(Math.max(1, Math.round(SCALE * 0.6)), (session) => ui.pickSession(session));
+
+ui.childBounds = (id) => followers.boundsOf(id);
 
 let appliedTheme = "";
 let themeRequest = 0;
@@ -71,19 +79,27 @@ function applySettings(): Promise<void> {
     return api
       .readPet(theme.slice(4))
       .then(PetSheet.load)
-      .then((sheet) => { if (request === themeRequest) npc.setPet(sheet); })
+      .then((sheet) => {
+        if (request !== themeRequest) return;
+        npc.setPet(sheet);
+        followers.setPet(sheet);
+      })
       .catch(() => {
         // A pet that cannot be loaded falls back to the built-in character.
         if (request === themeRequest) {
           npc.setPet(null);
+          followers.setPet(null);
           setTheme("postie");
           npc.redraw();
+          followers.redraw();
         }
       });
   } else {
     npc.setPet(null);
+    followers.setPet(null);
     setTheme(theme);
     npc.redraw();
+    followers.redraw();
     return Promise.resolve();
   }
 }
@@ -97,7 +113,12 @@ ui.onThemesChanged = loadThemes;
 
 // Hidden until the saved look is applied, so the default character never flashes at startup.
 npc.el.style.visibility = "hidden";
-const stage = h("div", { id: "stage" }, npc.el, ui.root, ui.bubble);
+store.children.onChange = () => {
+  followers.sync(store.sessions, store.children);
+  ui.refresh();
+};
+
+const stage = h("div", { id: "stage" }, followers.el, npc.el, ui.root, ui.bubble);
 document.body.append(stage);
 
 // ---- mood: what the character is doing, derived from Claude's activity ----------
@@ -130,26 +151,29 @@ const folder = (path: string | null | undefined) => (path ?? "").split(/[\\/]/).
 
 void on<Session[]>("sessions", (sessions) => {
   store.sessions = sessions;
+  followers.sync(sessions, store.children);
   ui.refresh();
   updateMood();
 });
 
 void on<AgentEvent>("agent-event", (event) => {
+  // The speaker is the child of that session when it has one; otherwise the main character talks.
+  const who = followers.boundsOf(event.sessionId) ? event.sessionId : null;
   switch (event.event) {
     case "PreToolUse":
       npc.pulse();
-      ui.showBubble(describeActivity(event.tool, event.detail), 2500);
+      ui.showBubble(describeActivity(event.tool, event.detail), 2500, who);
       break;
     case "PostToolUseFailure":
       errorUntil = performance.now() + ERROR_MS;
-      ui.showBubble(t("Uy, algo falló…"), 3000);
+      ui.showBubble(t("Uy, algo falló…"), 3000, who);
       break;
     case "Stop":
       doneUntil = performance.now() + DONE_MS;
-      ui.showBubble(event.message ? `✔ ${event.message.split("\n")[0].slice(0, 110)}` : t("✔ ¡Listo!"), 5000);
+      ui.showBubble(event.message ? `✔ ${firstLine(event.message).slice(0, 110)}` : t("✔ ¡Listo!"), 5000, who);
       break;
     case "Notification":
-      ui.showBubble(t("Claude te necesita ✋"), 5000);
+      ui.showBubble(t("Claude te necesita ✋"), 5000, who);
       break;
   }
   updateMood();
@@ -229,15 +253,30 @@ function frame(time: number) {
   const dt = Math.min(0.1, (time - last) / 1000);
   last = time;
   npc.update(dt);
+  followers.update(dt, {
+    x: npc.x,
+    w: npc.w,
+    direction: npc.direction,
+    hidden: npc.isMini,
+    sleeping: npc.asleep,
+    sink: npc.sinkAmount,
+    lie: npc.lieAmount,
+    lieDir: npc.lieDirection,
+  });
   ui.layout();
   updateMood();
   reportHits();
   requestAnimationFrame(frame);
 }
 
-window.addEventListener("pointermove", (event) => npc.watch(event.clientX, event.clientY));
+const onPointer = (x: number, y: number) => {
+  followers.watch(x, y);
+  npc.calm = followers.pointerNear;
+  npc.watch(x, y);
+};
+window.addEventListener("pointermove", (event) => onPointer(event.clientX, event.clientY));
 // The overlay ignores the mouse, so the backend reports where it is (window coordinates).
-void on<[number, number]>("cursor", ([x, y]) => npc.watch(x, y));
+void on<[number, number]>("cursor", ([x, y]) => onPointer(x, y));
 
 async function boot() {
   try {

@@ -23,7 +23,7 @@ Guía del proyecto para Claude Code. Para la documentación de usuario completa 
 
 ## Instalación y comandos
 
-Requisitos: **Node 20+**, **Rust** (toolchain estable reciente, edición 2024), **WebView2** (Windows) y `claude` en el `PATH` con sesión iniciada.
+Requisitos: **Node 20+**, **Rust** (toolchain estable reciente, edición 2024), **WebView2** (Windows) y `claude` en el `PATH` con sesión iniciada. El NPC comprueba esa sesión con `claude auth status` y, si falta, ofrece *Iniciar sesión* (abre una terminal con `claude auth login`).
 
 ```bash
 npm install
@@ -61,17 +61,18 @@ vault.rs ◀── vigila *.md de la vault (`- [ ] … #claude`) ──▶ runne
 |---|---|
 | `lib.rs` | Ventana overlay, hit-test/click-through, bandeja, atajos globales `Ctrl+Alt+Y/N`, registro de comandos Tauri, arranque de servicios. |
 | `main.rs` | Punto de entrada mínimo. |
-| `state.rs` | `Settings` (serde, camelCase, persistido en `settings.json` del dir de config de la app) y `Shared` (sesiones, cuota, permisos pendientes, tareas). |
-| `hooks.rs` | Servidor HTTP local (`tiny_http`): recibe hooks de Claude Code, deriva el estado de sesión, retiene las `PermissionRequest` hasta que el usuario responde, `/agent`, `/usage`; instala/quita hooks en `~/.claude/settings.json` (11 eventos en `HOOK_EVENTS`). |
-| `runner.rs` | Lanza `claude -p --output-format stream-json`, parsea el JSON en streaming, emite progreso y resultado. |
+| `state.rs` | `Settings` (serde, camelCase, persistido en `settings.json` del dir de config de la app) y `Shared` (sesiones, cuota, permisos pendientes, respuestas a preguntas `answers`, tareas). `Session` lleva `topic` (primer prompt) y `prompt` (último), tomados del hook `UserPromptSubmit`. |
+| `hooks.rs` | Servidor HTTP local (`tiny_http`): recibe hooks de Claude Code, deriva el estado de sesión, retiene las `PermissionRequest` hasta que el usuario responde, `/agent`, `/usage`; instala/quita hooks en `~/.claude/settings.json` (11 eventos en `HOOK_EVENTS`). Las `PermissionRequest` de `AskUserQuestion` y `ExitPlanMode` llevan `questions` / `plan`; `answer_question` permite la llamada con `decision.updatedInput.answers` (`{pregunta: etiqueta(s)}`). La aprobación automática nunca responde `AskUserQuestion`. |
+| `runner.rs` | Lanza `claude -p --output-format stream-json`, parsea el JSON en streaming, emite progreso y resultado. `start_task` acepta `resume` (`--resume <id>`, solo ids tipo UUID) y captura el `session_id` del evento `system/init`, que emite como `task-update {kind:"session"}`. `auth_status` ejecuta `claude auth status` y lee `loggedIn`. |
 | `vault.rs` | Obsidian: detecta vaults, escanea tareas `#claude`, vigila cambios, bandeja `Claude NPC Inbox.md`, reescritura segura de la nota. |
 | `bridge.rs` + `bin/npc-bridge.rs` | Traduce hooks de Gemini CLI, Cursor y Codex al endpoint `/agent`. |
-| `telegram.rs` | Long-polling; aprobar/denegar permisos desde un único chat configurado. |
-| `notify.rs` | Avisos de un solo sentido a Slack y Feishu (incoming webhooks). |
-| `remote.rs` | Vista de móvil de solo lectura (PWA) en el puerto 47651 con token aleatorio. |
+| `history.rs` | `recent_sessions`: lista sesiones pasadas leyendo `~/.claude/projects/*/*.jsonl` (solo cabecera y cola; título del último `custom-title` o último prompt; cwd de los registros). Alimenta «Recientes» en Sesiones. |
+| `telegram.rs` | Long-polling; aprobar/denegar permisos desde un único chat configurado. No responde preguntas (`AskUserQuestion`) ni planes: esas peticiones muestran Permitir/Denegar. |
+| `notify.rs` | Avisos de un solo sentido a Slack y Feishu (incoming webhooks). Sin respuestas. |
+| `remote.rs` | Vista de móvil de solo lectura (PWA) en el puerto 47651 con token aleatorio. Sirve el snapshot de sesiones (incluidos `topic` y `prompt`) y la cuota. |
 | `themes.rs` | Temas propios (`themes/<nombre>.json`) e instalación por URL (máx. 64 KB). |
 | `pets.rs` | Importación de Codex Pets (spritesheet 1536×1872, 8×9 celdas de 192×208). |
-| `platform.rs` | Las pocas diferencias Windows/macOS/Linux (home, registro de Obsidian, terminal, enfocar ventana). |
+| `platform.rs` | Las pocas diferencias Windows/macOS/Linux (home, registro de Obsidian, terminal, enfocar ventana). Abre terminales para reanudar una sesión (`open_terminal`) o para `claude auth login` (`open_login_terminal`), ambas sobre `launch_terminal`. |
 
 Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista móvil, opcional, red local), **1420** (Vite en desarrollo).
 
@@ -85,7 +86,12 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 | `physics.ts` | Cuerpo rígido 2D mínimo: gravedad, rebotes, impactos. Adaptado de just-simple-npc. |
 | `sprite.ts` | Personaje Postie dibujado desde código; poses y paletas/temas (claves de color `obswepmyYfLKtrzq123`). |
 | `petsprite.ts` | Render de Codex Pets por filas de spritesheet. |
-| `ui.ts` | Menú, paneles (tareas, sesiones, Obsidian, ajustes), tarjetas de permiso; helper `h()` para crear DOM. |
+| `ui.ts` | Menú, paneles (tareas, sesiones, Obsidian, ajustes), tarjetas de permiso; helper `h()` para crear DOM. `sessionCard` (`pickSession`): panel de una sesión, abierto al pulsar su fila o su hijo, con estado/actividad, sus permisos pendientes, preguntas con opciones (única/múltiple, «Otra respuesta…», «Enviar respuestas»), aprobación de plan y cuadro *Escribir* (`--resume`, oculto mientras la sesión piensa, trabaja o espera). Sesiones muestra la sección *Recientes* (`history.rs`, sin duplicar las activas). En tareas, *Reintentar* (fallidas, reenvía prompt, carpeta y sesión) y *Continuar* (terminadas bien); aviso/botón *Iniciar sesión* y estado del CLI en Ajustes > Claude > Conexión. Las tarjetas de permiso se cachean para no perder el foco. |
+| `activity.ts` | `describeActivity`: convierte una llamada de herramienta cruda (`mcp__…`, rutas, URLs) en una frase legible para burbujas, filas de sesión y el panel. |
+| `children.ts` | «Hijos»: copias pequeñas del personaje que el usuario asigna a una sesión; cuáles tienen y cómo se ven se guarda en `localStorage`. |
+| `followers.ts` | Dibuja los hijos que siguen al personaje principal; cada uno repite lo que hace su sesión y, al pulsarlo, abre el panel de esa sesión (`pickSession`). |
+| `frog.ts` | Personaje alternativo «Don Rana» (rana con chaqueta azul marino, camisa blanca y corbata roja), como `Character` de `sprite.ts`. |
+| `duck.ts` | Personaje alternativo «Don Pato» (pato con chaqueta gris carbón, camisa blanca y corbata granate), como `Character` de `sprite.ts`. |
 | `i18n.ts` | Diccionario es/en/pt/fr/de. |
 | `styles.css` | Estilos. |
 
@@ -103,9 +109,19 @@ Puertos: **47650** (hooks, `/agent`, `/usage`; solo loopback), **47651** (vista 
 
 `Mood`: `idle | thinking | working | juggling (subagentes) | waiting (necesita permiso) | done | error`. Los agentes externos usan `state` ∈ `idle thinking working waiting attention done error ended` en `/agent`. Un Codex Pet mapea cada estado a su fila de animación (idle, running-right/left, waving, running, review, waiting, jumping, failed).
 
+## Documentación y push
+
+- Agente **`doc-keeper`** (`.claude/agents/doc-keeper.md`, modelo Haiku): revisa que CLAUDE.md, README.md y MVP.md reflejen el código real sin perder información. Invócalo tras cambios de arquitectura, comandos, ajustes, puertos o idiomas.
+- Hook **PreToolUse** (`.claude/settings.json` → `.claude/hooks/require-doc-review.mjs`): bloquea `git push` mientras `.claude/.doc-review-ok` (ignorado por git) no contenga el SHA del HEAD actual. `doc-keeper` escribe esa marca al terminar la revisión; si haces nuevos commits, hay que repetirla. Si cambia documentación, commitéala antes del push.
+
 ## Pendiente de verificar (necesita el entorno del usuario)
 
 1. Una tarea real con `claude` con sesión iniciada (el desarrollo se probó con un `claude` de pega que emite el mismo `stream-json`).
 2. Una vault real de Obsidian.
 3. Gemini CLI, Cursor y Codex reales, y bots reales de Telegram/Slack/Feishu.
 4. Atajos `Ctrl+Alt+Y/N` con teclado físico; macOS, Linux, WSL y SSH remoto.
+5. Continuar una conversación con `--resume` (*Continuar* en tareas y *Escribir* en una sesión) con un `claude` real, también sobre una sesión creada en Claude Desktop.
+6. El login desde la NPC (*Iniciar sesión* abre una terminal con `claude auth login`) y el sondeo de `claude auth status` al cerrarla.
+7. Que Claude Code acepte `decision.updatedInput.answers` en `AskUserQuestion` (respuestas desde el panel de la sesión) y que la aprobación de `ExitPlanMode` se comporte como se espera.
+8. Que las sesiones de Claude Desktop envíen el hook `PermissionRequest` (y, por tanto, aparezcan sus permisos y preguntas en el NPC).
+9. La sección *Recientes* con un historial real grande (límites de lectura de `history.rs`) y *Reintentar* con un `claude` real.

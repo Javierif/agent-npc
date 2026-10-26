@@ -143,20 +143,40 @@ pub fn resume_command(cwd: &str, session: Option<&str>) -> String {
     format!("cd {} && claude{resume}", sh_quote(cwd))
 }
 
+/// The shell line that signs the `claude` CLI in (it opens the browser itself).
+#[cfg_attr(windows, allow(dead_code))]
+pub fn login_command(cwd: &str) -> String {
+    format!("cd {} && claude auth login", sh_quote(cwd))
+}
+
+/// Opens a terminal in the user's home running `claude auth login`.
+pub fn open_login_terminal() -> Result<(), String> {
+    let home = home_dir().ok_or("could not find your home folder")?;
+    let cwd = home.to_string_lossy();
+    launch_terminal(&cwd, &["auth", "login"], login_command(&cwd))
+}
+
 /// Opens a terminal in `cwd` running `claude`, resuming `session` when known.
 pub fn open_terminal(cwd: &str, session: Option<&str>) -> Result<(), String> {
+    let id = session.filter(|id| *id != "unknown" && !id.contains(':'));
+    let args: Vec<&str> = id.map(|id| vec!["--resume", id]).unwrap_or_default();
+    launch_terminal(cwd, &args, resume_command(cwd, session))
+}
+
+/// Runs `claude <args>` in a new terminal window. `line` is the equivalent POSIX shell line
+/// (used on macOS and Linux; Windows Terminal takes the arguments directly).
+fn launch_terminal(cwd: &str, args: &[&str], line: String) -> Result<(), String> {
     #[cfg(windows)]
     {
+        let _ = &line;
         let mut cmd = Command::new("wt.exe");
-        cmd.args(["-d", cwd, "claude"]);
-        if let Some(id) = session.filter(|id| *id != "unknown" && !id.contains(':')) {
-            cmd.args(["--resume", id]);
-        }
+        cmd.args(["-d", cwd, "claude"]).args(args);
         cmd.spawn().map(|_| ()).map_err(|e| format!("could not open Windows Terminal: {e}"))
     }
     #[cfg(target_os = "macos")]
     {
-        let line = resume_command(cwd, session).replace('\\', r"\\").replace('"', r#"\""#);
+        let _ = args;
+        let line = line.replace('\\', r"\\").replace('"', r#"\""#);
         let script = format!(r#"tell application "Terminal" to activate do script "{line}""#);
         Command::new("osascript")
             .args(["-e", &script])
@@ -166,7 +186,8 @@ pub fn open_terminal(cwd: &str, session: Option<&str>) -> Result<(), String> {
     }
     #[cfg(all(not(windows), not(target_os = "macos")))]
     {
-        let line = format!("{}; exec \"${{SHELL:-sh}}\"", resume_command(cwd, session));
+        let _ = args;
+        let line = format!("{line}; exec \"${{SHELL:-sh}}\"");
         let attempts: [(&str, &[&str]); 4] = [
             ("x-terminal-emulator", &["-e"]),
             ("gnome-terminal", &["--"]),
@@ -190,6 +211,11 @@ mod tests {
     fn quotes_for_posix_shells() {
         assert_eq!(sh_quote("plain"), "'plain'");
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn login_line_quotes_the_folder() {
+        assert_eq!(login_command("/home/a b"), "cd '/home/a b' && claude auth login");
     }
 
     #[test]

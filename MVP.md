@@ -20,6 +20,7 @@ Objetivo original: «un MVP con una mascota que se mueve por la pantalla, con f�
 | 10 | Modo mini, temas, Codex Pets, temas por URL, seguimiento de ojos | App real |
 | 11 | Avisos Slack/Feishu, vista móvil de solo lectura con token, 5 idiomas | App real y servidores simulados; test de traducciones |
 | 12 | Otros agentes: puentes Gemini/Cursor/Codex y endpoint `/agent` | Cargas de ejemplo según su documentación contra la app real |
+| 13 | Responder preguntas de Claude y aprobar planes desde el panel de la sesión; sesiones recientes; *Reintentar* en tareas fallidas | Tests unitarios y vista previa con `mockIPC`; **no** probado con un `claude` real |
 
 ## Fuera del MVP (decidido, no olvidado)
 
@@ -36,5 +37,12 @@ Estas comprobaciones no se pueden hacer sin tu sesión y tu equipo:
 2. Una vault real de Obsidian (la lectura del registro de vaults y el botón *Abrir en Obsidian* usan el formato documentado, sin Obsidian instalado para verlo).
 3. Gemini CLI, Cursor y Codex reales, y los bots reales de Telegram, Slack y Feishu.
 4. Los atajos `Ctrl+Alt+Y/N` con teclado físico.
+5. Continuar una conversación con `--resume` (*Continuar* en tareas y *Escribir* en una sesión) con un `claude` real, también sobre una sesión creada en Claude Desktop.
+6. El login desde la NPC (*Iniciar sesión* abre una terminal con `claude auth login`) y el sondeo de `claude auth status` al cerrarla.
+7. Que Claude Code acepte las respuestas a `AskUserQuestion` (`updatedInput.answers`) y que la aprobación de `ExitPlanMode` se comporte como se espera.
+8. Que las sesiones de Claude Desktop envíen el hook `PermissionRequest`.
+9. La sección *Recientes* con un historial real grande, y *Reintentar* con un `claude` real.
 
-Si alguno falla, abre un issue con el síntoma: los puntos 1–4 son los candidatos más probables a necesitar un ajuste.
+Telegram y Slack no responden preguntas ni planes (Telegram muestra Permitir/Denegar); eso queda para el escritorio.
+
+Si alguno falla, abre un issue con el síntoma: los puntos 1–9 son los candidatos más probables a necesitar un ajuste.

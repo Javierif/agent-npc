@@ -1,4 +1,5 @@
 pub mod bridge;
+mod history;
 mod hooks;
 mod notify;
 mod pets;
@@ -133,6 +134,11 @@ fn open_terminal(cwd: String, session_id: Option<String>) -> Result<(), String> 
     platform::open_terminal(&cwd, session_id.as_deref())
 }
 
+#[tauri::command]
+fn auth_login() -> Result<(), String> {
+    platform::open_login_terminal()
+}
+
 fn point_in_regions(regions: &[Rect], x: f64, y: f64) -> bool {
     regions
         .iter()
@@ -248,11 +254,15 @@ pub fn run() {
             hooks::hooks_snippet,
             remote_info,
             hooks::resolve_permission,
+            hooks::answer_question,
             hooks::hooks_installed,
             hooks::install_hooks,
             hooks::uninstall_hooks,
             runner::start_task,
             runner::cancel_task,
+            runner::auth_status,
+            auth_login,
+            history::recent_sessions,
             vault::detect_vaults,
             vault::scan_vault,
             vault::vault_add_task,

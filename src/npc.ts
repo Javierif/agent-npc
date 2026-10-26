@@ -93,6 +93,8 @@ export class Npc {
   private startleLeft = 0;
   private coverLeft = 0;
   private reactCooldown = 0;
+  /** Set while the pointer is busy with something else near the character (its followers); no startling. */
+  calm = false;
   private sayLeft = 0;
   private lastPointer: [number, number, number] | null = null;
   /** Back-and-forth passes of the pointer over the character: slow ones pet it, fast ones slap it. */
@@ -249,7 +251,7 @@ export class Npc {
 
   /** A pointer whizzing past close by startles the character or makes it cover its eyes. */
   private reactToPointer(speed: number, px: number, py: number) {
-    if (speed < 2200 || this.reactCooldown > 0) return;
+    if (speed < 2200 || this.reactCooldown > 0 || this.calm) return;
     if (this.held || this.mini || this.engaged || this.mood !== "idle" || this.hurtLeft > 0 || !isResting(this.body)) return;
     if (this.action === "sleep" || this.action === "hide" || this.startleLeft > 0 || this.coverLeft > 0) return;
     if (performance.now() - this.passTime < 1000) return; // someone is already playing with it
@@ -426,9 +428,12 @@ export class Npc {
     return "idle";
   }
 
-  /** Office jokes for everyone, now and then ones about being a sticky note or a frog in a suit. */
+  /** Office jokes for everyone, now and then ones about being a sticky note or an animal in a suit. */
   private quipKind(): PhraseKind {
-    if (!this.pet && Math.random() < 0.4) return activeCharacter().id === "frog" ? "quipFrog" : "quipPostie";
+    if (!this.pet && Math.random() < 0.4) {
+      const id = activeCharacter().id;
+      return id === "frog" ? "quipFrog" : id === "duck" ? "quipDuck" : "quipPostie";
+    }
     return "quip";
   }
 
@@ -589,6 +594,28 @@ export class Npc {
     this.facing = on ? -1 : this.facing;
     if (!on && fromUser) this.onUndock();
     this.drawn = "";
+  }
+
+  /** Napping, in the open or sunk below the taskbar (followers copy this). */
+  get asleep(): boolean {
+    return this.action === "sleep" || (this.action === "hide" && this.hideMode === "sleep" && this.sink > 0.2);
+  }
+
+  get sinkAmount(): number {
+    return this.sink;
+  }
+
+  get lieAmount(): number {
+    return this.lie;
+  }
+
+  get lieDirection(): 1 | -1 {
+    return this.lieDir;
+  }
+
+  /** Which way it faces: 1 right, -1 left. */
+  get direction(): 1 | -1 {
+    return this.facing;
   }
 
   get isMini(): boolean {

@@ -2,6 +2,7 @@
 // consistent. "Postie" (a peach blob wearing a sticky note) is the default; others,
 // like the frog in frog.ts, plug in through the `Character` interface below.
 
+import { DUCK } from "./duck";
 import { FROG } from "./frog";
 
 export type Pose =
@@ -22,6 +23,30 @@ const BASE_PALETTE: Record<string, string> = {
   p: "#f28b8b", m: "#7a3b2e", y: "#ffd966", Y: "#e3b341", f: "#5a3d32",
   L: "#9aa3ad", K: "#4b5560", t: "#6ec6ff", r: "#ff5a5a", z: "#8fb8ff",
   q: "#fff3a0", h: "#ffd3b8", "1": "#ff6b6b", "2": "#6bd6ff", "3": "#9bff6b",
+  // hats
+  A: "#e5484d", B: "#3b82f6", C: "#f5c542", D: "#2b2b33", E: "#ff8fb3",
+};
+
+export type HatId = "none" | "party" | "crown" | "tophat" | "beanie" | "flower" | "antenna" | "halo";
+export const HATS: HatId[] = ["none", "party", "crown", "tophat", "beanie", "flower", "antenna", "halo"];
+/** Hue turns (degrees) offered to tell the copies of the character apart. */
+export const HUES = [0, 45, 90, 150, 200, 250, 300, 340];
+
+/** How one copy of the character is told apart from the others: a colour and a hat. */
+export interface Look {
+  hue: number;
+  hat: HatId;
+}
+
+// Hats are 16 columns wide; the last row sits on top of the head. Letters are palette keys.
+const HAT_SHAPES: Record<Exclude<HatId, "none">, string[]> = {
+  party: [".......CC.......", ".......AA.......", "......ABBA......", ".....AAAAAA....."],
+  crown: ["....C..CC..C....", "....CCCCCCCC....", "....CACCCCAC...."],
+  tophat: [".....DDDDDD.....", ".....DDDDDD.....", ".....DAAAAD.....", "...DDDDDDDDDD..."],
+  beanie: [".......EE.......", "......BBBB......", ".....BBBBBB....."],
+  flower: ["..........E.....", ".........EwE....", "..........E....."],
+  antenna: [".......AA.......", ".......D........", ".......D........"],
+  halo: [".....C....C.....", "......CCCC......"],
 };
 
 export type Eyes = "open" | "blink" | "closed" | "happy" | "wide" | "down" | "sad" | "up" | "x";
@@ -42,6 +67,8 @@ export interface Character {
   palette: Record<string, string>;
   /** Palette key used for the arms in waving / flailing poses. */
   arm: string;
+  /** Palette keys that change colour when the character is given another hue. */
+  tint: string[];
   /** Body-grid position of the tear shown when sad. */
   tear: [number, number];
   eyes(set: Setter, row: RowOf, eyes: Eyes, gaze: number): void;
@@ -64,6 +91,7 @@ export interface Character {
 export const THEMES: Record<string, { label: string; character?: string; colors: Record<string, string> }> = {
   postie: { label: "Postie", colors: {} },
   rana: { label: "Don Rana", character: "frog", colors: {} },
+  pato: { label: "Don Pato", character: "duck", colors: {} },
   menta: { label: "Menta", colors: { b: "#8fd9a8", s: "#5fb883", p: "#ffb3c7", y: "#ff9ecb", Y: "#e06fa3" } },
   noche: { label: "Noche", colors: { b: "#9d8cf0", s: "#7261c9", p: "#f0a0d8", y: "#5ec8ff", Y: "#3a9fd6", o: "#1d1840" } },
   tostada: { label: "Tostada", colors: { b: "#d9a066", s: "#b57a3e", p: "#e8806a", y: "#f6f1e0", Y: "#d9cfae", o: "#2f1d10" } },
@@ -386,6 +414,7 @@ const POSTIE: Character = {
   body: POSTIE_BODY,
   palette: {},
   arm: "b",
+  tint: ["b", "s", "h"],
   tear: [4, 9],
   mouthAt: [8, 10],
   cheek: [2, 12, 8],
@@ -397,14 +426,57 @@ const POSTIE: Character = {
   sitLegs: postieSitLegs,
 };
 
-const CHARACTERS: Record<string, Character> = { postie: POSTIE, frog: FROG };
+const CHARACTERS: Record<string, Character> = { postie: POSTIE, frog: FROG, duck: DUCK };
 active = POSTIE;
 
 const cache = new Map<string, HTMLCanvasElement>();
 
-/** Draws `pose` into a canvas at an integer `scale`. Result is cached per pose/scale. */
-export function renderPose(pose: Pose, scale: number, gaze = 0): HTMLCanvasElement {
-  const key = `${pose}@${scale}@${gaze}`;
+/** Turns a `#rrggbb` colour round the colour wheel by `degrees`, keeping its saturation and lightness. */
+function rotateHue(hex: string, degrees: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  let sat = 0;
+  if (d > 0) {
+    sat = d / (1 - Math.abs(2 * l - 1));
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  const hue = (((h + degrees) % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r1, g1, b1] = hue < 60 ? [c, x, 0] : hue < 120 ? [x, c, 0] : hue < 180 ? [0, c, x] : hue < 240 ? [0, x, c] : hue < 300 ? [x, 0, c] : [c, 0, x];
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${to(r1)}${to(g1)}${to(b1)}`;
+}
+
+/** The colour that stands for a hue in a picker: the character's main tinted colour at that hue. */
+export function swatchColor(hue: number): string {
+  return rotateHue(palette[active.tint[0]] ?? "#f4a67a", hue);
+}
+
+function paintHat(set: Setter, row: RowOf, hat: Exclude<HatId, "none">) {
+  const shape = HAT_SHAPES[hat];
+  shape.forEach((line, i) => {
+    const r = i - shape.length;
+    [...line].forEach((c, x) => c !== "." && set(x, row(r), c));
+  });
+}
+
+/** Draws `pose` into a canvas at an integer `scale`. Result is cached per pose/scale/look. */
+export function renderPose(pose: Pose, scale: number, gaze = 0, look?: Look): HTMLCanvasElement {
+  const hue = look?.hue ?? 0;
+  const hat = look?.hat ?? "none";
+  const key = `${pose}@${scale}@${gaze}@${hue}@${hat}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
@@ -422,15 +494,21 @@ export function renderPose(pose: Pose, scale: number, gaze = 0): HTMLCanvasEleme
 
   const feet = recipe.feet === undefined ? ([3, 10] as [number, number]) : recipe.feet;
   if (feet) active.feet(set, row, feet);
+  if (hat !== "none") paintHat(set, row, hat);
   recipe.extra?.(set, row);
 
   const canvas = document.createElement("canvas");
   canvas.width = SPRITE_W * scale;
   canvas.height = SPRITE_H * scale;
   const ctx = canvas.getContext("2d")!;
+  let colors = palette;
+  if (hue) {
+    colors = { ...palette };
+    for (const k of active.tint) if (colors[k]) colors[k] = rotateHue(colors[k], hue);
+  }
   grid.forEach((line, y) =>
     line.forEach((c, x) => {
-      const color = palette[c];
+      const color = colors[c];
       if (!color) return;
       ctx.fillStyle = color;
       ctx.fillRect(x * scale, y * scale, scale, scale);
