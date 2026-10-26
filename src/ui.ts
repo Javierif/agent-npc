@@ -2,6 +2,7 @@ import {
   api, errorText,
   type PermissionRequest, type PetInfo, type Quota, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
 } from "./api";
+import { describeActivity } from "./activity";
 import { LANGS, t, type Lang } from "./i18n";
 import { THEMES } from "./sprite";
 import type { Npc } from "./npc";
@@ -34,6 +35,17 @@ export interface TaskView {
   note?: string | null;
   vault?: VaultTask | null;
   noteOpen: boolean;
+  /** Claude session this task ran in, once known; lets the user continue it. */
+  sessionId?: string;
+  cwd?: string;
+  /** True while the latest event was a tool call (drives the NPC's "working" mood). */
+  usingTool?: boolean;
+}
+
+/** The session the next task will continue (`claude --resume`). */
+interface Target {
+  sessionId: string;
+  cwd: string;
 }
 
 export interface Store {
@@ -48,6 +60,7 @@ export interface Store {
 }
 
 type TabId = "tasks" | "sessions" | "vault" | "settings";
+type SettingsSection = "look" | "activity" | "claude" | "links";
 
 interface TabBody {
   el: HTMLElement;
@@ -66,6 +79,9 @@ function stateLabel(state: string): string {
     default: return state;
   }
 }
+
+/** States in which a headless `--resume` would collide with a turn that is still running. */
+const BUSY = new Set(["thinking", "working", "waiting"]);
 
 const STATE_COLOR: Record<string, string> = {
   idle: "#9aa3ad", thinking: "#e3b341", working: "#4caf7d", waiting: "#e8643c",
@@ -136,6 +152,11 @@ export class Ui {
   private closeTimer = 0;
   private bubbleTimer = 0;
   private fanButtons = new Map<TabId, HTMLButtonElement>();
+  private target: Target | null = null;
+  /** Session whose detail popup is open (by id). */
+  private openSession: string | null = null;
+  private settingsSection: SettingsSection = "look";
+  private sessionCardCache:{ key: string; el: HTMLElement } | null = null;
   onSettingsChanged: () => void = () => {};
   /** Reloads the custom themes and imported pets after one is added. */
   onThemesChanged: () => Promise<void> = async () => {};
@@ -260,7 +281,9 @@ export class Ui {
     const onRight = b.x + b.w + 250 < window.innerWidth;
     this.bubble.style.left = onRight ? `${b.x + b.w + 6}px` : "auto";
     this.bubble.style.right = onRight ? "auto" : `${window.innerWidth - b.x + 6}px`;
-    this.bubble.style.top = `${Math.max(8, b.top + b.h / 2 - 14)}px`;
+    // Anchored by its bottom edge so a multi-line bubble grows upward instead of off the screen.
+    this.bubble.style.top = "auto";
+    this.bubble.style.bottom = `${Math.max(8, window.innerHeight - (b.top + b.h * 0.6))}px`;
   }
 
   showBubble(text: string, ms = 4000) {
@@ -295,9 +318,33 @@ export class Ui {
     this.refresh();
   }
 
+  /** Popup with everything known about one session: topic, last prompt and Claude's last reply. */
+  private sessionCard(s: Session): HTMLElement {
+    const close = () => { this.openSession = null; this.refresh(); };
+    return h("div", { class: "card sticky", "data-hit": "" },
+      h("div", { class: "sticky-title" }, s.topic || baseName(s.cwd || t("sesión"))),
+      h("div", { class: "muted small", title: s.cwd }, `${baseName(s.cwd || "")} · ${stateLabel(s.state)}`),
+      s.prompt && s.prompt !== s.topic && h("div", { class: "muted small" }, `${t("Tú")}: ${s.prompt}`),
+      h("div", { class: "sticky-body" }, s.message || (s.tool ? describeActivity(s.tool, s.detail) : t("(sin texto)"))),
+      h("div", { class: "row" },
+        s.message && h("button", { class: "btn", onclick: () => void navigator.clipboard.writeText(s.message ?? "") }, t("Copiar")),
+        this.resumable(s) && s.cwd && !BUSY.has(s.state) && h("button", { class: "btn ok", onclick: () => { close(); this.writeTo({ sessionId: s.id, cwd: s.cwd }); } }, t("Escribir")),
+        h("button", { class: "btn", onclick: close }, t("Cerrar"))));
+  }
+
+  /** Hook events refresh the UI constantly; keep the same popup node (and its animation and text selection) until its content changes. */
+  private cachedSessionCard(s: Session): HTMLElement {
+    const key = [s.id, s.state, s.topic, s.prompt, s.message, s.tool, s.detail].join("\u0001");
+    if (this.sessionCardCache?.key !== key) this.sessionCardCache = { key, el: this.sessionCard(s) };
+    return this.sessionCardCache.el;
+  }
+
   private renderNotes() {
     const open = this.store.tasks.filter((task) => task.noteOpen && task.result !== undefined);
+    const session = this.store.sessions.find((s) => s.id === this.openSession);
+    if (this.openSession && !session) this.openSession = null; // it ended
     this.notesEl.replaceChildren(
+      ...(session ? [this.cachedSessionCard(session)] : []),
       ...open.map((task) =>
         h("div", { class: `card sticky${task.status === "ok" ? "" : " bad"}`, "data-hit": "" },
           h("div", { class: "sticky-title" }, task.status === "ok" ? "✔ " : "✖ ", clip(task.prompt, 60)),
@@ -327,11 +374,25 @@ export class Ui {
   // ---- tabs ---------------------------------------------------------------------
 
   private async send(prompt: string, vault?: VaultTask) {
+    // Vault tasks always run in the vault, never inside a continued session.
+    const target = vault ? null : this.target;
     try {
-      await api.startTask(prompt, this.store.settings.workDir || undefined, vault);
+      await api.startTask(prompt, target?.cwd || this.store.settings.workDir || undefined, vault, target?.sessionId);
     } catch (err) {
       this.say(errorText(err), 7000);
     }
+  }
+
+  /** Points the Tasks box at a session so the next message continues it. */
+  private writeTo(target: Target) {
+    this.target = target;
+    this.tab = null;
+    this.toggle("tasks");
+    this.panelEl.querySelector("textarea")?.focus();
+  }
+
+  private resumable(s: Session): boolean {
+    return (!s.agent || s.agent === "claude") && s.id !== "unknown" && !s.id.includes(":");
   }
 
   private tasksTab(): TabBody {
@@ -351,22 +412,29 @@ export class Ui {
     const dir = h("input", { class: "field small", placeholder: t("Carpeta de trabajo (vacío = tu carpeta de usuario)"), value: this.store.settings.workDir });
     dir.addEventListener("change", () => void this.save({ workDir: dir.value.trim() }));
     const list = h("div", { class: "list" });
+    const chip = h("div", { class: "row" });
 
     const refresh = () => {
+      chip.replaceChildren(
+        ...(this.target ? [
+          h("span", { class: "muted small", title: this.target.cwd }, t("Continuando sesión de {name}", { name: baseName(this.target.cwd) || t("sesión") })),
+          h("button", { class: "btn", title: t("Empezar una conversación nueva"), onclick: () => { this.target = null; this.refresh(); } }, "×"),
+        ] : []),
+      );
       list.replaceChildren(
         ...this.store.tasks.slice(0, 6).map((task) =>
           h("div", { class: "item" },
             h("div", { class: "item-main" },
               h("div", { class: "item-title" }, `${{ running: "⏳", ok: "✅", error: "❌", cancelled: "⏹️" }[task.status]} ${clip(task.prompt, 70)}`),
               h("div", { class: "muted small" }, clip(task.line, 90))),
-            task.status === "running"
-              ? h("button", { class: "btn", onclick: () => void api.cancelTask(task.id) }, t("Parar"))
-              : task.result !== undefined && !task.noteOpen && h("button", { class: "btn", onclick: () => { task.noteOpen = true; this.refresh(); } }, t("Ver")))),
+            task.status === "running" && h("button", { class: "btn", onclick: () => void api.cancelTask(task.id) }, t("Parar")),
+            task.status !== "running" && task.result !== undefined && !task.noteOpen && h("button", { class: "btn", onclick: () => { task.noteOpen = true; this.refresh(); } }, t("Ver")),
+            task.status !== "running" && task.sessionId && !task.vault && h("button", { class: "btn", title: t("Seguir esta conversación"), onclick: () => this.writeTo({ sessionId: task.sessionId!, cwd: task.cwd ?? "" }) }, t("Continuar")))),
         ...(this.store.tasks.length === 0 ? [h("div", { class: "muted" }, t("Aún no hay tareas. Escribe una arriba."))] : []),
       );
     };
     const el = h("div", { class: "tab" },
-      h("h3", {}, t("Tareas para Claude")), input,
+      h("h3", {}, t("Tareas para Claude")), chip, input,
       h("div", { class: "row" }, h("button", { class: "btn ok", onclick: submit }, t("Enviar")), dir), list);
     return { el, refresh };
   }
@@ -394,11 +462,18 @@ export class Ui {
         ...this.store.sessions.map((s) =>
           h("div", { class: "item" },
             h("span", { class: "dot", style: `background:${STATE_COLOR[s.state] ?? "#999"}` }),
-            h("div", { class: "item-main" },
-              h("div", { class: "item-title" }, baseName(s.cwd || t("sesión")),
-                h("span", { class: "muted" }, ` · ${stateLabel(s.state)}${s.agent && s.agent !== "claude" ? ` · ${s.agent}` : ""}${s.subagents ? t(" · {n} subagentes", { n: s.subagents }) : ""}`)),
-              h("div", { class: "muted small" }, clip((s.state === "done" ? s.message : s.detail ? `${s.tool}: ${s.detail}` : "") || "", 110))),
-            s.cwd && h("button", { class: "btn", title: t("Traer la terminal al frente (o abrir una nueva)"), onclick: () => void this.jumpTo(s) }, t("Terminal")))),
+            h("div", { class: "item-main clickable", title: t("Ver el detalle"), onclick: () => { this.openSession = this.openSession === s.id ? null : s.id; this.refresh(); } },
+              h("div", { class: "item-title clamp", title: s.cwd }, s.topic || baseName(s.cwd || t("sesión"))),
+              h("div", { class: "muted small" }, `${baseName(s.cwd || "")} · ${stateLabel(s.state)}${s.agent && s.agent !== "claude" ? ` · ${s.agent}` : ""}${s.subagents ? t(" · {n} subagentes", { n: s.subagents }) : ""}`),
+              h("div", { class: "muted small clamp" }, (s.state === "done" ? (s.message ?? "").trim().split("\n")[0] : s.tool ? describeActivity(s.tool, s.detail) : "") || "")),
+            h("div", { class: "item-actions" },
+              this.resumable(s) && s.cwd && h("button", {
+                class: "btn ok",
+                disabled: BUSY.has(s.state),
+                title: BUSY.has(s.state) ? t("Claude está trabajando en esta sesión; espera a que termine") : t("Escribirle desde aquí (continúa la conversación)"),
+                onclick: () => this.writeTo({ sessionId: s.id, cwd: s.cwd }),
+              }, t("Escribir")),
+              s.cwd && h("button", { class: "btn", title: t("Traer la terminal al frente (o abrir una nueva)"), onclick: () => void this.jumpTo(s) }, t("Terminal"))))),
         ...(this.store.sessions.length === 0 ? [h("div", { class: "muted" }, t("No hay sesiones de Claude Code activas."))] : []),
       );
     };
@@ -527,29 +602,81 @@ export class Ui {
         phone.textContent = "";
       }
     };
+
+    // Activity slider: previews live while dragging, saves on release.
+    const activityLabel = h("div", { class: "activity-label" });
+    const describeActivityLevel = (v: number) =>
+      v <= 15 ? t("😴 Dormilón: pasa casi todo el rato quieto o durmiendo")
+        : v <= 40 ? t("😌 Tranquilo: se mueve poco y duerme bastante")
+          : v <= 60 ? t("🙂 Normal")
+            : v <= 85 ? t("😄 Activo: anda y hace cosas a menudo")
+              : t("🤪 Hiperactivo: no para quieto ni un segundo");
+    const slider = h("input", { type: "range", min: "0", max: "100", step: "5", class: "slider", value: String(s.activity) });
+    const showLevel = () => { activityLabel.textContent = describeActivityLevel(Number(slider.value)); };
+    slider.addEventListener("input", () => { showLevel(); this.npc.setActivity(Number(slider.value)); });
+    slider.addEventListener("change", () => void this.save({ activity: Number(slider.value) }));
+    showLevel();
+
+    /** Collapsible group of related settings. */
+    const section = (title: string, open: boolean, ...children: Array<Child>) =>
+      h("details", { class: "section", open }, h("summary", {}, title), h("div", { class: "section-body" }, ...children));
+
+    const pane = (...children: Array<Child>) => h("div", { class: "pane" }, ...children);
+    const panes: Record<SettingsSection, HTMLElement> = {
+      look: pane(
+        section(t("Idioma"), true, languages),
+        section(t("Personaje"), true, themes,
+          check(t("Modo mini"), "mini", t("Se asoma por el borde derecho de la pantalla. También: doble clic sobre el personaje."))),
+        section(t("Importar y temas"), false,
+          h("div", { class: "muted small" }, t("Importar un Codex Pet (carpeta con pet.json)")),
+          h("div", { class: "row" }, petPath, h("button", { class: "btn", onclick: () => void importPet() }, t("Importar"))),
+          h("div", { class: "muted small" }, t("Instalar un tema desde una URL (JSON de paleta)")),
+          h("div", { class: "row" }, themeUrl, h("button", { class: "btn", onclick: () => void installTheme() }, t("Instalar"))))),
+      activity: pane(
+        section(t("Hiperactividad"), true,
+          h("div", { class: "muted small" }, t("Cuánto se mueve tu mascota por la pantalla. Más hiperactivo, más anda y hace cosas; más tranquilo, más rato pasa quieto y durmiendo.")),
+          h("div", { class: "slider-row" }, h("span", {}, "😴"), slider, h("span", {}, "⚡")),
+          h("div", { class: "slider-ends muted small" }, h("span", {}, t("Tranquilo")), h("span", {}, t("Hiperactivo"))),
+          activityLabel)),
+      claude: pane(
+        section(t("Conexión"), true, hooks),
+        section(t("Permisos y edición"), true,
+          check(t("Permitir que Claude edite archivos"), "allowEdits", t("Tareas lanzadas desde aquí usan acceptEdits.")),
+          check(t("Aprobar permisos automáticamente"), "autoApprove", t("⚠ Responde “Permitir” a todo sin preguntar.")),
+          h("div", { class: "muted small" }, t("Atajos globales: Ctrl+Alt+Y permitir · Ctrl+Alt+N denegar"))),
+        section(t("Vault de Obsidian"), false, text(s.vaultPath, t("Carpeta de tu vault de Obsidian"), "vaultPath"))),
+      links: pane(
+        section(t("Aprobar desde Telegram (opcional)"), false,
+          text(s.telegramToken, t("Token del bot (de @BotFather)"), "telegramToken", "password"),
+          text(s.telegramChatId, t("ID de tu chat"), "telegramChatId")),
+        section(t("Avisos en Slack / Feishu (solo notificaciones)"), false,
+          text(s.slackWebhook, t("URL del webhook de Slack"), "slackWebhook", "password"),
+          text(s.feishuWebhook, t("URL del webhook de Feishu/Lark"), "feishuWebhook", "password")),
+        section(t("Vista del móvil (solo lectura)"), false,
+          check(t("Vista del móvil (solo lectura)"), "remoteView", t("Sirve tus sesiones en la red local con un enlace secreto. Sin cifrar: úsalo solo en una red de confianza.")),
+          phone)),
+    };
+
+    const SETTINGS_SECTIONS: Array<[SettingsSection, string, string]> = [
+      ["look", "🎨", t("Aspecto")], ["activity", "⚡", t("Actividad")], ["claude", "🤖", "Claude"], ["links", "🔌", t("Conexiones")],
+    ];
+    const tabs = h("div", { class: "subtabs" });
+    const showSection = () => {
+      tabs.replaceChildren(...SETTINGS_SECTIONS.map(([id, icon, label]) =>
+        h("button", { class: `subtab${this.settingsSection === id ? " on" : ""}`, title: label, onclick: () => { this.settingsSection = id; showSection(); } },
+          icon, h("span", {}, label))));
+      for (const [id, el] of Object.entries(panes)) el.style.display = id === this.settingsSection ? "flex" : "none";
+    };
+    showSection();
+
+    const baseRefresh = refresh;
     return {
-      el: h("div", { class: "tab" }, h("h3", {}, t("Ajustes")),
-        h("div", { class: "muted small" }, t("Idioma")), languages,
-        h("div", { class: "muted small" }, t("Personaje")), themes,
-        h("div", { class: "muted small" }, t("Importar un Codex Pet (carpeta con pet.json)")),
-        h("div", { class: "row" }, petPath, h("button", { class: "btn", onclick: () => void importPet() }, t("Importar"))),
-        h("div", { class: "muted small" }, t("Instalar un tema desde una URL (JSON de paleta)")),
-        h("div", { class: "row" }, themeUrl, h("button", { class: "btn", onclick: () => void installTheme() }, t("Instalar"))),
-        check(t("Modo mini"), "mini", t("Se asoma por el borde derecho de la pantalla. También: doble clic sobre el personaje.")),
-        check(t("Permitir que Claude edite archivos"), "allowEdits", t("Tareas lanzadas desde aquí usan acceptEdits.")),
-        check(t("Aprobar permisos automáticamente"), "autoApprove", t("⚠ Responde “Permitir” a todo sin preguntar.")),
-        h("div", { class: "muted small" }, t("Vault de Obsidian")), text(s.vaultPath, t("Carpeta de tu vault de Obsidian"), "vaultPath"),
-        hooks,
-        h("div", { class: "muted small" }, t("Aprobar desde Telegram (opcional)")),
-        text(s.telegramToken, t("Token del bot (de @BotFather)"), "telegramToken", "password"),
-        text(s.telegramChatId, t("ID de tu chat"), "telegramChatId"),
-        h("div", { class: "muted small" }, t("Avisos en Slack / Feishu (solo notificaciones)")),
-        text(s.slackWebhook, t("URL del webhook de Slack"), "slackWebhook", "password"),
-        text(s.feishuWebhook, t("URL del webhook de Feishu/Lark"), "feishuWebhook", "password"),
-        check(t("Vista del móvil (solo lectura)"), "remoteView", t("Sirve tus sesiones en la red local con un enlace secreto. Sin cifrar: úsalo solo en una red de confianza.")),
-        phone,
-        h("div", { class: "muted small" }, t("Atajos globales: Ctrl+Alt+Y permitir · Ctrl+Alt+N denegar"))),
-      refresh,
+      el: h("div", { class: "tab" }, h("h3", {}, t("Ajustes")), tabs, ...Object.values(panes)),
+      refresh: () => {
+        baseRefresh();
+        const saved = String(this.store.settings.activity);
+        if (slider.value !== saved && document.activeElement !== slider) { slider.value = saved; showLevel(); }
+      },
     };
   }
 
@@ -586,12 +713,14 @@ export class Ui {
   applyTaskUpdate(update: TaskUpdate) {
     let task = this.store.tasks.find((t) => t.id === update.id);
     if (update.kind === "start") {
-      task = { id: update.id, prompt: update.vault?.text ?? update.text ?? "", status: "running", line: t("Empezando…"), vault: update.vault, noteOpen: false };
+      task = { id: update.id, prompt: update.vault?.text ?? update.text ?? "", status: "running", line: t("Empezando…"), vault: update.vault, noteOpen: false, cwd: update.cwd };
       this.store.tasks.unshift(task);
     }
     if (!task) return;
+    if (update.kind === "session") task.sessionId = update.sessionId;
     if (update.kind === "text" && update.text) task.line = update.text.split("\n").filter(Boolean).pop() ?? task.line;
-    if (update.kind === "tool") task.line = `🛠 ${update.tool}${update.text ? ` ${update.text}` : ""}`;
+    if (update.kind === "text" || update.kind === "tool") task.usingTool = update.kind === "tool";
+    if (update.kind === "tool") task.line = describeActivity(update.tool, update.text);
     if (update.kind === "result") {
       const cancelled = update.text === "Cancelled";
       task.status = cancelled ? "cancelled" : update.ok ? "ok" : "error";

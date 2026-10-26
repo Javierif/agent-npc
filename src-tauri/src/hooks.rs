@@ -161,6 +161,8 @@ fn agent(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
             tool: None,
             detail: None,
             message: None,
+            topic: None,
+            prompt: None,
             subagents: 0,
             agent: name.to_string(),
             updated_ms: 0,
@@ -249,6 +251,8 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
                 tool: None,
                 detail: None,
                 message: None,
+                topic: None,
+                prompt: None,
                 subagents: 0,
                 agent: "claude".into(),
                 updated_ms: 0,
@@ -266,6 +270,12 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
                     session.state = "thinking".into();
                     session.tool = None;
                     session.detail = None;
+                    if let Some(prompt) = payload["prompt"].as_str().map(str::trim).filter(|p| !p.is_empty()) {
+                        if session.topic.is_none() {
+                            session.topic = Some(truncate(prompt, 140));
+                        }
+                        session.prompt = Some(truncate(prompt, 600));
+                    }
                 }
                 "PreToolUse" => {
                     session.state = "working".into();

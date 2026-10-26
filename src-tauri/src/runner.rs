@@ -28,6 +28,8 @@ pub struct StartTask {
     pub prompt: String,
     pub cwd: Option<String>,
     pub vault: Option<VaultTask>,
+    /// Session id to continue (`claude --resume <id>`); `None` starts a fresh session.
+    pub resume: Option<String>,
 }
 
 fn claude_command() -> Command {
@@ -71,6 +73,9 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
     cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--allowedTools", SAFE_TOOLS]);
     if allow_edits {
         cmd.args(["--permission-mode", "acceptEdits"]);
+    }
+    if let Some(session) = task.resume.as_deref().map(str::trim).filter(|s| is_session_id(s)) {
+        cmd.args(["--resume", session]);
     }
     cmd.current_dir(&dir)
         .stdin(Stdio::piped())
@@ -125,6 +130,9 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
                         update["id"] = json!(id);
                         let _ = app.emit("task-update", update);
                     }
+                    Parsed::Session(session_id) => {
+                        let _ = app.emit("task-update", json!({ "id": id, "kind": "session", "sessionId": session_id }));
+                    }
                     Parsed::Result { ok, text } => finished = Some((ok, text)),
                 }
             }
@@ -173,7 +181,13 @@ pub fn cancel_task(id: u64, state: State<Arc<Shared>>) -> bool {
 
 enum Parsed {
     Update(Value),
+    Session(String),
     Result { ok: bool, text: String },
+}
+
+/// Hook payloads carry UUIDs; anything else (e.g. "unknown", "gemini:abc") is not resumable.
+fn is_session_id(id: &str) -> bool {
+    !id.starts_with('-') && !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// Translates one line of `--output-format stream-json` into what the NPC shows.
@@ -200,6 +214,10 @@ fn parse_event(event: &Value) -> Vec<Parsed> {
             ok: !event["is_error"].as_bool().unwrap_or(false),
             text: event["result"].as_str().unwrap_or("").to_string(),
         }],
+        Some("system") if event["subtype"] == "init" => event["session_id"]
+            .as_str()
+            .map(|id| vec![Parsed::Session(id.to_string())])
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -222,5 +240,19 @@ mod tests {
         assert!(matches!(&parse_event(&ok)[..], [Parsed::Result { ok: true, text }] if text == "done"));
         assert!(matches!(&parse_event(&failed)[..], [Parsed::Result { ok: false, .. }]));
         assert!(parse_event(&json!({"type":"system","subtype":"init"})).is_empty());
+    }
+
+    #[test]
+    fn captures_session_id_from_init() {
+        let init = json!({"type":"system","subtype":"init","session_id":"abc-123"});
+        assert!(matches!(&parse_event(&init)[..], [Parsed::Session(id)] if id == "abc-123"));
+    }
+
+    #[test]
+    fn only_uuid_like_ids_are_resumable() {
+        assert!(is_session_id("1b4e28ba-2fa1-11d2-883f-0016d3cca427"));
+        assert!(!is_session_id("gemini:abc"));
+        assert!(!is_session_id("--flag"));
+        assert!(!is_session_id(""));
     }
 }

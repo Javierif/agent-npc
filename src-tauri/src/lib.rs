@@ -20,7 +20,7 @@ use serde::Deserialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow,
+    Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -145,6 +145,7 @@ fn spawn_hit_test(window: WebviewWindow, state: HitState) {
         let mut origin = (0.0, 0.0);
         let mut scale = 1.0;
         let mut tick = 0u32;
+        let mut last_cursor: Option<(i32, i32)> = None;
         loop {
             // Window calls hop to the main thread, which may be waiting on this very mutex
             // (in `set_hit_regions`), so never hold the lock across them.
@@ -160,11 +161,22 @@ fn spawn_hit_test(window: WebviewWindow, state: HitState) {
             }
             tick = tick.wrapping_add(1);
 
-            let interactive = force
-                || window
-                    .cursor_position()
-                    .map(|c| point_in_regions(&regions, (c.x - origin.0) / scale, (c.y - origin.1) / scale))
-                    .unwrap_or(false);
+            // The overlay ignores the mouse, so the page never sees it move; report it from here
+            // (about 20 times a second, only when it changed) so the character can follow it.
+            let cursor = window
+                .cursor_position()
+                .ok()
+                .map(|c| ((c.x - origin.0) / scale, (c.y - origin.1) / scale));
+            if tick % 3 == 0 {
+                if let Some((x, y)) = cursor {
+                    let rounded = (x as i32, y as i32);
+                    if last_cursor != Some(rounded) {
+                        last_cursor = Some(rounded);
+                        let _ = window.emit("cursor", rounded);
+                    }
+                }
+            }
+            let interactive = force || cursor.map(|(x, y)| point_in_regions(&regions, x, y)).unwrap_or(false);
             if ignoring != Some(!interactive) {
                 ignoring = Some(!interactive);
                 let _ = window.set_ignore_cursor_events(!interactive);

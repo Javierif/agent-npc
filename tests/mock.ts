@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const log: Array<{ cmd: string; args: unknown }> = [];
-let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650 };
+let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50 };
 let hooks = false;
 
 mockIPC((cmd, args) => {

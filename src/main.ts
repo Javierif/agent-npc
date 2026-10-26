@@ -1,11 +1,12 @@
 import { api, on, type AgentEvent, type PermissionRequest, type Session, type TaskUpdate, type Usage, type VaultTask } from "./api";
+import { describeActivity } from "./activity";
 import { Npc, type Mood } from "./npc";
 import { PetSheet } from "./petsprite";
 import { resolveLang, setLang, t } from "./i18n";
 import { registerThemes, setTheme } from "./sprite";
 import { h, Ui, type Store } from "./ui";
 
-const SCALE = 4;
+const SCALE = 3;
 const DONE_MS = 5000;
 const ERROR_MS = 3500;
 
@@ -13,6 +14,7 @@ const store: Store = {
   settings: {
     vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, theme: "postie", mini: false,
     telegramToken: "", telegramChatId: "", remoteView: false, remoteToken: "", slackWebhook: "", feishuWebhook: "", language: "auto",
+    activity: 50,
   },
   pets: [],
   usage: null,
@@ -43,6 +45,10 @@ const npc = new Npc(
     }, 260);
   },
   () => void ui.save({ mini: false }),
+  (text) => {
+    const line = t(text);
+    ui.showBubble(line, Math.max(2200, line.length * 90));
+  },
 );
 ui = new Ui(store, npc, (text, ms) => ui.showBubble(text, ms));
 
@@ -50,21 +56,22 @@ let appliedTheme = "";
 let themeRequest = 0;
 
 /** Applies the saved look: language, built-in or custom palette, or an imported Codex pet. */
-function applySettings() {
+function applySettings(): Promise<void> {
   const lang = resolveLang(store.settings.language, navigator.languages);
   setLang(lang);
   document.documentElement.lang = lang;
   npc.setMini(store.settings.mini);
+  npc.setActivity(store.settings.activity);
 
   const theme = store.settings.theme;
-  if (theme === appliedTheme) return;
+  if (theme === appliedTheme) return Promise.resolve();
   appliedTheme = theme;
   const request = ++themeRequest;
   if (theme.startsWith("pet:")) {
-    void api
+    return api
       .readPet(theme.slice(4))
       .then(PetSheet.load)
-      .then((sheet) => request === themeRequest && npc.setPet(sheet))
+      .then((sheet) => { if (request === themeRequest) npc.setPet(sheet); })
       .catch(() => {
         // A pet that cannot be loaded falls back to the built-in character.
         if (request === themeRequest) {
@@ -77,9 +84,10 @@ function applySettings() {
     npc.setPet(null);
     setTheme(theme);
     npc.redraw();
+    return Promise.resolve();
   }
 }
-ui.onSettingsChanged = applySettings;
+ui.onSettingsChanged = () => void applySettings();
 
 async function loadThemes() {
   registerThemes(await api.customThemes().catch(() => []));
@@ -87,6 +95,8 @@ async function loadThemes() {
 }
 ui.onThemesChanged = loadThemes;
 
+// Hidden until the saved look is applied, so the default character never flashes at startup.
+npc.el.style.visibility = "hidden";
 const stage = h("div", { id: "stage" }, npc.el, ui.root, ui.bubble);
 document.body.append(stage);
 
@@ -100,7 +110,7 @@ function computeMood(): Mood {
   if (store.perms.length > 0) return "waiting";
   if (store.sessions.some((s) => s.state === "attention")) return "waiting";
   if (now < errorUntil) return "error";
-  const working = store.sessions.some((s) => s.state === "working") || store.tasks.some((t) => t.status === "running" && t.line.startsWith("🛠"));
+  const working = store.sessions.some((s) => s.state === "working") || store.tasks.some((t) => t.status === "running" && t.usingTool);
   if (working) {
     const subagents = store.sessions.reduce((n, s) => n + s.subagents, 0);
     return subagents > 0 ? "juggling" : "working";
@@ -127,7 +137,8 @@ void on<Session[]>("sessions", (sessions) => {
 void on<AgentEvent>("agent-event", (event) => {
   switch (event.event) {
     case "PreToolUse":
-      ui.showBubble(`🛠 ${event.tool ?? "tool"}${event.detail ? `: ${event.detail}` : ""}`.slice(0, 120), 2500);
+      npc.pulse();
+      ui.showBubble(describeActivity(event.tool, event.detail), 2500);
       break;
     case "PostToolUseFailure":
       errorUntil = performance.now() + ERROR_MS;
@@ -224,12 +235,18 @@ function frame(time: number) {
   requestAnimationFrame(frame);
 }
 
-window.addEventListener("pointermove", (event) => npc.watch(event.clientX));
+window.addEventListener("pointermove", (event) => npc.watch(event.clientX, event.clientY));
+// The overlay ignores the mouse, so the backend reports where it is (window coordinates).
+void on<[number, number]>("cursor", ([x, y]) => npc.watch(x, y));
 
 async function boot() {
-  await loadThemes();
-  store.settings = await api.getSettings();
-  applySettings();
+  try {
+    const [, settings] = await Promise.all([loadThemes(), api.getSettings()]);
+    store.settings = settings;
+    await applySettings();
+  } finally {
+    npc.el.style.visibility = "";
+  }
   ui.relocalize();
   store.hooksInstalled = await api.hooksInstalled().catch(() => false);
   store.vaultTasks = await api.scanVault().catch(() => []);

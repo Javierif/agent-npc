@@ -16,6 +16,8 @@ export interface Settings {
   slackWebhook: string;
   feishuWebhook: string;
   language: string;
+  /** 0 = sleepy, 100 = hyperactive. */
+  activity: number;
 }
 
 export interface PetInfo {
@@ -50,6 +52,8 @@ export interface Session {
   tool: string | null;
   detail: string | null;
   message: string | null;
+  topic: string | null;
+  prompt: string | null;
   subagents: number;
   agent: string;
   updatedMs: number;
@@ -79,7 +83,8 @@ export interface AgentEvent {
 
 export interface TaskUpdate {
   id: number;
-  kind: "start" | "text" | "tool" | "result";
+  kind: "start" | "text" | "tool" | "session" | "result";
+  sessionId?: string;
   text?: string;
   tool?: string;
   ok?: boolean;
@@ -100,8 +105,8 @@ export const api = {
   hooksInstalled: () => invoke<boolean>("hooks_installed"),
   installHooks: () => invoke("install_hooks"),
   uninstallHooks: () => invoke("uninstall_hooks"),
-  startTask: (prompt: string, cwd?: string, vault?: VaultTask) =>
-    invoke<number>("start_task", { task: { prompt, cwd: cwd ?? null, vault: vault ?? null } }),
+  startTask: (prompt: string, cwd?: string, vault?: VaultTask, resume?: string) =>
+    invoke<number>("start_task", { task: { prompt, cwd: cwd ?? null, vault: vault ?? null, resume: resume ?? null } }),
   cancelTask: (id: number) => invoke<boolean>("cancel_task", { id }),
   detectVaults: () => invoke<string[]>("detect_vaults"),
   scanVault: () => invoke<VaultTask[]>("scan_vault"),

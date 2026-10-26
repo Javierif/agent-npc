@@ -25,6 +25,8 @@ pub struct Settings {
     pub slack_webhook: String,
     pub feishu_webhook: String,
     pub language: String,
+    /// How restless the character is, 0 (sleepy) to 100 (hyperactive).
+    pub activity: u8,
 }
 
 impl Default for Settings {
@@ -44,6 +46,7 @@ impl Default for Settings {
             slack_webhook: String::new(),
             feishu_webhook: String::new(),
             language: "auto".into(),
+            activity: 50,
         }
     }
 }
@@ -73,6 +76,10 @@ pub struct Session {
     pub tool: Option<String>,
     pub detail: Option<String>,
     pub message: Option<String>,
+    /// First prompt seen in the session: what it is about.
+    pub topic: Option<String>,
+    /// Latest prompt, i.e. what Claude is answering now.
+    pub prompt: Option<String>,
     pub subagents: u32,
     pub agent: String,
     pub updated_ms: u64,

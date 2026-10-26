@@ -30,12 +30,27 @@ export function rowFor(pose: Pose, facing: 1 | -1): RowName {
     case "work2":
     case "juggle1":
     case "juggle2": return "running";
-    case "think": return "review";
+    case "think1":
+    case "think2":
+    case "think3": return "review";
     case "alert1":
     case "alert2": return "waiting";
     case "happy1":
+    case "pet1":
+    case "pet2":
+    case "dance1":
+    case "dance2":
+    case "dance3":
+    case "idea1":
+    case "idea2":
     case "happy2":
     case "held": return "jumping";
+    case "slap1":
+    case "slap2":
+    case "angry1":
+    case "angry2":
+    case "hurt1":
+    case "hurt2":
     case "sad": return "failed";
     default: return "idle";
   }

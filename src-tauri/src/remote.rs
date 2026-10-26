@@ -179,7 +179,7 @@ mod tests {
             "a".into(),
             crate::state::Session {
                 id: "a".into(), cwd: "C:\\proj".into(), state: "working".into(), tool: Some("Edit".into()),
-                detail: Some("a.ts".into()), message: None, subagents: 0, agent: "claude".into(),
+                detail: Some("a.ts".into()), message: None, topic: None, prompt: None, subagents: 0, agent: "claude".into(),
                 updated_ms: hooks::now_ms(),
             },
         );
