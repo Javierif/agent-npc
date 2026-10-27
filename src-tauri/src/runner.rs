@@ -32,7 +32,7 @@ pub struct StartTask {
     pub resume: Option<String>,
 }
 
-fn claude_command() -> Command {
+pub(crate) fn claude_command() -> Command {
     let mut cmd = Command::new("claude");
     #[cfg(windows)]
     {

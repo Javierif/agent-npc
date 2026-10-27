@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const log: Array<{ cmd: string; args: unknown }> = [];
-let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50, obsidianFavorites: [{ id: "daily-notes:open", label: "Nota diaria" }], brainEnabled: true, brainInjectSessions: false, brainExclude: [] as string[] };
+let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50, obsidianFavorites: [{ id: "daily-notes:open", label: "Nota diaria" }], brainEnabled: true, brainInjectSessions: false, brainReflect: false, brainPersona: false, brainExclude: [] as string[] };
 let hooks = false;
 
 mockIPC((cmd, args) => {
@@ -33,6 +33,8 @@ mockIPC((cmd, args) => {
       { kind: "tag", path: "Ideas/Recetas de pasta.md", title: "Recetas de pasta", target: "recetas", line: 0, before: "", after: "tags: [recetas]" },
     ];
     case "brain_apply": return null;
+    case "brain_reflect": return { note: "Claude NPC/Reflexiones/2026-10-27 Revisar el presupuesto (abcdef12).md", lessons: 2, decisions: 1, todos: 1, persona: 2, promoted: 1 };
+    case "brain_persona": return { traits: ["Prefiere respuestas cortas y con un toque de humor."], about: ["Trabaja sobre todo por las noches."], pending: 3 };
     case "brain_remember": return "Claude NPC/Memoria/Nota.md";
     case "obsidian_uri": return null;
     case "obsidian_run_command": return null;

@@ -17,7 +17,7 @@ const store: Store = {
   settings: {
     vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, theme: "postie", mini: false,
     telegramToken: "", telegramChatId: "", remoteView: false, remoteToken: "", slackWebhook: "", feishuWebhook: "", language: "auto",
-    activity: 50, obsidianFavorites: [], brainEnabled: false, brainInjectSessions: false, brainExclude: [],
+    activity: 50, obsidianFavorites: [], brainEnabled: false, brainInjectSessions: false, brainReflect: false, brainPersona: false, brainExclude: [],
   },
   pets: [],
   usage: null,
@@ -146,6 +146,8 @@ function computeMood(): Mood {
 
 function updateMood() {
   npc.setMood(computeMood());
+  // Nothing spontaneous from the leader while a child is busy, so the output stays readable.
+  npc.setQuiet(store.sessions.some((s) => followers.has(s.id) && (s.state === "working" || s.state === "thinking")));
 }
 
 const folder = (path: string | null | undefined) => (path ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
@@ -218,6 +220,11 @@ void on<TaskUpdate>("task-update", (update) => {
 
 void on<{ titles: string[] }>("brain-recall", ({ titles }) => {
   if (titles.length > 0) ui.showBubble(t("🧠 Me acordé de: {titles}", { titles: titles.slice(0, 2).join(", ") }), 5000);
+});
+
+void on<{ lessons: number; decisions: number; todos: number; promoted?: number }>("brain-reflected", ({ lessons, decisions, todos, promoted }) => {
+  const forged = promoted ? ` · ${t("🎭 {n} nuevo(s) en la personalidad", { n: promoted })}` : "";
+  ui.showBubble(t("🪞 Reflexioné sobre la sesión: {l} lecciones, {d} decisiones, {t} pendientes", { l: lessons, d: decisions, t: todos }) + forged, 6000);
 });
 
 let announcedVaultTasks = -1;

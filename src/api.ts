@@ -25,6 +25,29 @@ export interface Settings {
   /** Also add memory to Claude Code prompts through the hook reply. */
   brainInjectSessions: boolean;
   brainExclude: string[];
+  /** When a session ends, a small Haiku agent reflects on it and writes lessons and to-dos. */
+  brainReflect: boolean;
+  /** Reflections also note how the user likes to work; that personality is added to prompts. */
+  brainPersona: boolean;
+}
+
+/** What one reflection wrote under "Claude NPC/". */
+export interface ReflectOutcome {
+  note: string | null;
+  lessons: number;
+  decisions: number;
+  todos: number;
+  /** Personality observations recorded. */
+  persona: number;
+  /** Observations that became part of the personality this time. */
+  promoted: number;
+}
+
+/** The personality note (`Claude NPC/Personalidad.md`) as the UI shows it. */
+export interface PersonaView {
+  traits: string[];
+  about: string[];
+  pending: number;
 }
 
 export interface BrainHit {
@@ -50,7 +73,7 @@ export interface BrainProposal {
 export interface BrainNote {
   path: string;
   title: string;
-  kind: "session" | "memory" | "project" | "diary";
+  kind: "session" | "memory" | "reflection" | "project" | "diary";
   mtimeS: number;
 }
 
@@ -210,6 +233,8 @@ export const api = {
   brainStatus: (refresh = false) => invoke<BrainStatus>("brain_status", { refresh }),
   brainSearch: (query: string) => invoke<BrainHit[]>("brain_search", { query }),
   brainRemember: (text: string) => invoke<string>("brain_remember", { text }),
+  brainReflect: (session?: string) => invoke<ReflectOutcome>("brain_reflect", { session: session ?? null }),
+  brainPersona: () => invoke<PersonaView>("brain_persona"),
   brainSuggestions: () => invoke<BrainProposal[]>("brain_suggestions"),
   brainApply: (proposal: BrainProposal) => invoke("brain_apply", { proposal }),
   obsidianRunCommand: (id: string) => invoke("obsidian_run_command", { id }),

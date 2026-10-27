@@ -27,7 +27,7 @@ pub struct RecentSession {
     pub updated_ms: u64,
 }
 
-fn read_range(path: &Path, from_end: bool, bytes: u64) -> Option<String> {
+pub(crate) fn read_range(path: &Path, from_end: bool, bytes: u64) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     let take = bytes.min(len);
@@ -39,7 +39,7 @@ fn read_range(path: &Path, from_end: bool, bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
-fn records(text: &str) -> impl Iterator<Item = Value> + '_ {
+pub(crate) fn records(text: &str) -> impl Iterator<Item = Value> + '_ {
     // The first and last lines of a partial read may be cut; they simply fail to parse.
     text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok())
 }
@@ -54,7 +54,7 @@ fn clip(text: &str, max: usize) -> String {
 }
 
 /// Title, working folder and latest prompt found in a transcript's head and tail.
-fn describe(path: &Path) -> Option<(String, Option<String>)> {
+pub(crate) fn describe(path: &Path) -> Option<(String, Option<String>)> {
     let tail = read_range(path, true, TAIL_BYTES)?;
     let mut title = None;
     let mut last_prompt = None;
@@ -77,6 +77,70 @@ fn describe(path: &Path) -> Option<(String, Option<String>)> {
         cwd = records(&head).find_map(|r| r["cwd"].as_str().map(str::to_string));
     }
     Some((cwd?, title.filter(|t| !t.is_empty()).or(last_prompt)))
+}
+
+/// The transcript file of session `id` (UUID-like), wherever its project folder is.
+pub(crate) fn find_transcript(root: &Path, id: &str) -> Option<std::path::PathBuf> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .filter(|p| p.path().is_dir())
+        .map(|p| p.path().join(format!("{id}.jsonl")))
+        .find(|p| p.is_file())
+}
+
+/// The visible text of a user or assistant record: plain strings and `text` blocks, never tool traffic.
+fn message_text(record: &Value) -> Option<String> {
+    if record["isSidechain"].as_bool().unwrap_or(false) || record["isMeta"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    let content = &record["message"]["content"];
+    let text = match content {
+        Value::String(s) => s.clone(),
+        Value::Array(blocks) => blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
+        _ => return None,
+    };
+    let text = text.trim();
+    // Harness-injected pieces (command echoes, reminders) start with a tag.
+    (!text.is_empty() && !text.starts_with('<')).then(|| text.to_string())
+}
+
+pub(crate) struct Excerpt {
+    pub text: String,
+    pub user_turns: usize,
+}
+
+const TURN_CHARS: usize = 1_500;
+
+/// The end of a conversation as `Usuario:` / `Claude:` lines, newest turns kept when it must be cut to `max_chars`.
+pub(crate) fn conversation_excerpt(path: &Path, max_chars: usize) -> Option<Excerpt> {
+    let tail = read_range(path, true, TAIL_BYTES)?;
+    let mut turns: Vec<(bool, String)> = Vec::new();
+    for record in records(&tail) {
+        let user = match record["type"].as_str() {
+            Some("user") => true,
+            Some("assistant") => false,
+            _ => continue,
+        };
+        if let Some(text) = message_text(&record) {
+            turns.push((user, text.chars().take(TURN_CHARS).collect()));
+        }
+    }
+    let mut kept = Vec::new();
+    let (mut used, mut user_turns) = (0, 0);
+    for (user, text) in turns.iter().rev() {
+        used += text.chars().count();
+        if used > max_chars && !kept.is_empty() {
+            break;
+        }
+        user_turns += *user as usize;
+        kept.push(format!("{}: {text}", if *user { "Usuario" } else { "Claude" }));
+    }
+    kept.reverse();
+    (!kept.is_empty()).then(|| Excerpt { text: kept.join("\n\n"), user_turns })
 }
 
 /// The most recently touched sessions under `root` (`~/.claude/projects`), newest first.
@@ -152,6 +216,28 @@ mod tests {
         assert_eq!(found[1].title.as_deref(), Some("Renamed title"), "the latest custom title wins");
         assert_eq!(found[1].cwd, "C:\\proj\\a");
         assert_eq!(recent(&root, 1).len(), 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn excerpts_keep_visible_text_and_the_newest_turns() {
+        let root = std::env::temp_dir().join(format!("claude-npc-excerpt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        write(&root, "p", "abc-1", &[
+            r#"{"type":"user","message":{"content":"primero"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"respuesta uno"},{"type":"tool_use","name":"Bash"}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"salida"}]}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"meta"}}"#,
+            r#"{"type":"user","message":{"content":"<command-name>/x</command-name>"}}"#,
+            r#"{"type":"user","message":{"content":"segundo"}}"#,
+        ]);
+        let path = find_transcript(&root, "abc-1").unwrap();
+        assert!(find_transcript(&root, "../abc-1").is_none() && find_transcript(&root, "nope").is_none());
+        let all = conversation_excerpt(&path, 10_000).unwrap();
+        assert_eq!(all.text, "Usuario: primero\n\nClaude: respuesta uno\n\nUsuario: segundo");
+        assert_eq!(all.user_turns, 2);
+        let cut = conversation_excerpt(&path, 10).unwrap();
+        assert_eq!(cut.text, "Usuario: segundo");
         let _ = fs::remove_dir_all(&root);
     }
 

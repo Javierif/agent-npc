@@ -37,7 +37,7 @@ pub fn safe_name(text: &str, max: usize) -> String {
     name
 }
 
-fn yaml_quote(text: &str) -> String {
+pub(super) fn yaml_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''").replace(['\n', '\r'], " "))
 }
 
@@ -46,7 +46,7 @@ fn brain_root(vault: &Path) -> PathBuf {
 }
 
 /// Writes under `Claude NPC/<dir>/<file>`; both parts are cleaned, so nothing escapes the folder.
-fn own_path(vault: &Path, dir: &str, file: &str) -> Result<PathBuf, String> {
+pub(super) fn own_path(vault: &Path, dir: &str, file: &str) -> Result<PathBuf, String> {
     let file = safe_name(file.trim_end_matches(".md"), 120);
     if file.is_empty() {
         return Err("empty note name".into());
@@ -69,7 +69,7 @@ fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
 }
 
 /// Adds `line` to a log-like note (created with `header` if missing) unless `needle` is already there.
-fn append_line(path: &Path, header: &str, needle: &str, line: &str) -> Result<(), String> {
+pub(super) fn append_line(path: &Path, header: &str, needle: &str, line: &str) -> Result<(), String> {
     let mut content = fs::read_to_string(path).unwrap_or_else(|_| header.to_string());
     if content.contains(needle) {
         return Ok(());
@@ -86,14 +86,14 @@ fn quote(text: &str) -> String {
     text.lines().map(|l| format!("> {l}").trim_end().to_string()).collect::<Vec<_>>().join("\n")
 }
 
-fn project_name(cwd: &str) -> String {
+pub(super) fn project_name(cwd: &str) -> String {
     let folder = cwd.rsplit(['/', '\\']).find(|p| !p.is_empty()).unwrap_or("");
     let name = safe_name(folder, 40);
     if name.is_empty() { "General".to_string() } else { name }
 }
 
 /// Existing note of a session: its file name carries the first characters of the id.
-fn find_session_note(dir: &Path, id8: &str) -> Option<PathBuf> {
+pub(super) fn find_session_note(dir: &Path, id8: &str) -> Option<PathBuf> {
     let tag = format!("({id8})");
     fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
         p.extension().is_some_and(|e| e == "md") && p.file_name().is_some_and(|n| n.to_string_lossy().contains(&tag))

@@ -5,10 +5,13 @@
 
 pub mod capture;
 pub mod index;
+pub mod persona;
 pub mod recall;
+pub mod reflect;
 pub mod suggest;
 
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -28,7 +31,7 @@ use crate::{
     vault,
 };
 use index::{Index, BRAIN_DIR};
-use recall::{brief, recall, Hit, BRIEF_HEADER};
+use recall::{brief, is_wrapped, recall, Hit};
 
 /// An index older than this is rebuilt in the background on the next use.
 const FRESH: Duration = Duration::from_secs(60);
@@ -49,6 +52,9 @@ struct Cached {
 
 static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
 static BUILDING: AtomicBool = AtomicBool::new(false);
+/// Sessions that already received the personality block: it stays in their conversation.
+static PERSONA_SENT: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+const MAX_PERSONA_SESSIONS: usize = 500;
 
 fn lock_cache() -> std::sync::MutexGuard<'static, Option<Cached>> {
     CACHE.lock().unwrap_or_else(|e| e.into_inner())
@@ -144,14 +150,45 @@ fn announce(app: &AppHandle, titles: &[String], source: &str) {
     let _ = app.emit("brain-recall", json!({ "titles": titles, "source": source }));
 }
 
+/// The personality block, when the user turned it on and the note has something in it.
+fn persona_block(shared: &Shared) -> Option<String> {
+    if !shared.settings.lock().unwrap().brain_persona {
+        return None;
+    }
+    let (vault, _) = config(shared)?;
+    persona::block(&vault)
+}
+
+/// Whether `session` has not received the personality block yet (and marks it as sent).
+fn first_persona(session: &str) -> bool {
+    let mut guard = PERSONA_SENT.lock().unwrap_or_else(|e| e.into_inner());
+    let sent = guard.get_or_insert_with(HashSet::new);
+    if sent.len() >= MAX_PERSONA_SESSIONS {
+        sent.clear();
+    }
+    sent.insert(session.to_string())
+}
+
+/// The memory block followed by the personality block, whichever exist.
+fn join_blocks(memory: Option<(String, Vec<String>)>, persona: Option<String>) -> Option<(String, Vec<String>)> {
+    match (memory, persona) {
+        (Some((text, titles)), Some(p)) => Some((format!("{text}\n\n{p}"), titles)),
+        (Some(found), None) => Some(found),
+        (None, Some(p)) => Some((p, Vec::new())),
+        (None, None) => None,
+    }
+}
+
 /// The prompt of a task run from the NPC, led by what the vault remembers about it.
 pub fn task_prompt(app: &AppHandle, shared: &Shared, prompt: &str) -> String {
     if !active(shared) {
         return prompt.to_string();
     }
-    match prompt_brief(shared, prompt, true) {
+    match join_blocks(prompt_brief(shared, prompt, true), persona_block(shared)) {
         Some((text, titles)) => {
-            announce(app, &titles, "task");
+            if !titles.is_empty() {
+                announce(app, &titles, "task");
+            }
             recall::wrap_prompt(&text, prompt)
         }
         None => prompt.to_string(),
@@ -169,25 +206,44 @@ pub fn hook_context(app: &AppHandle, shared: &Shared, payload: &Value) -> Option
     let prompt = payload["prompt"].as_str()?;
     let sid = payload["session_id"].as_str().unwrap_or("");
     // Already carries memory (a task run from the NPC), is a slash command, or is a background run.
-    if prompt.starts_with(BRIEF_HEADER) || prompt.trim_start().starts_with('/') || shared.is_headless(sid) {
+    if is_wrapped(prompt) || prompt.starts_with(reflect::MARKER) || prompt.trim_start().starts_with('/') || shared.is_headless(sid) {
         return None;
     }
-    let (text, titles) = prompt_brief(shared, prompt, false)?;
-    announce(app, &titles, "session");
+    // The personality goes once per session; the memory block follows each prompt.
+    let persona = persona_block(shared).filter(|_| first_persona(sid));
+    let (text, titles) = join_blocks(prompt_brief(shared, prompt, false), persona)?;
+    if !titles.is_empty() {
+        announce(app, &titles, "session");
+    }
     Some(text)
 }
 
-/// A session reported progress or ended: write or refresh its note in the vault.
-pub fn on_session(shared: &Arc<Shared>, session: Session) {
-    if !active(shared) || session.agent != "claude" || session.topic.is_none() || shared.is_headless(&session.id) {
+/// A session reported progress or ended: write or refresh its note in the vault, and, when it
+/// `ended` with reflection on, let the small Haiku agent think over what was said.
+pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended: bool) {
+    let own_run = session.topic.as_deref().is_some_and(|t| t.starts_with(reflect::MARKER));
+    if !active(shared) || session.agent != "claude" || session.topic.is_none() || own_run || shared.is_headless(&session.id) {
         return;
     }
-    let shared = shared.clone();
+    let (app, shared) = (app.clone(), shared.clone());
     thread::spawn(move || {
-        let Some((vault, _)) = config(&shared) else { return };
+        let Some((vault, exclude)) = config(&shared) else { return };
         let index = index_for(&shared, false);
-        if let Err(err) = capture::session_note(&vault, index.as_deref(), &session, &vault::civil_date(), &vault::civil_hm()) {
+        let (date, hm) = (vault::civil_date(), vault::civil_hm());
+        if let Err(err) = capture::session_note(&vault, index.as_deref(), &session, &date, &hm) {
             eprintln!("claude-npc: could not write the session note: {err}");
+        }
+        let (reflecting, persona) = {
+            let s = shared.settings.lock().unwrap();
+            (s.brain_reflect, s.brain_persona)
+        };
+        if ended && reflecting && !reflect::cwd_excluded(&vault, &exclude, &session.cwd) {
+            let subject = reflect::Subject { id: session.id.clone(), cwd: session.cwd.clone(), topic: session.topic.clone().unwrap_or_default() };
+            // Too short a conversation or a busy reflector is normal, not worth reporting.
+            if let Ok(outcome) = reflect::reflect(&vault, index_for(&shared, false).as_deref(), &subject, &date, persona) {
+                forget();
+                let _ = app.emit("brain-reflected", &outcome);
+            }
         }
     });
 }
@@ -205,7 +261,7 @@ pub struct RecentNote {
 /// The newest notes the NPC wrote, across its subfolders.
 fn recent_notes(vault: &Path) -> Vec<RecentNote> {
     let mut found = Vec::new();
-    for (folder, kind) in [("Sesiones", "session"), ("Memoria", "memory"), ("Proyectos", "project"), ("Diario", "diary")] {
+    for (folder, kind) in [("Sesiones", "session"), ("Memoria", "memory"), ("Reflexiones", "reflection"), ("Proyectos", "project"), ("Diario", "diary")] {
         let Ok(entries) = fs::read_dir(vault.join(BRAIN_DIR).join(folder)) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -295,6 +351,43 @@ pub async fn brain_remember(text: String, state: State<'_, Arc<Shared>>) -> Resu
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// "Reflexionar ahora": the Haiku agent thinks over session `session`, or the latest one when `None`.
+#[tauri::command]
+pub async fn brain_reflect(session: Option<String>, state: State<'_, Arc<Shared>>) -> Result<reflect::Outcome, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    if !shared.settings.lock().unwrap().brain_enabled {
+        return Err("Turn the memory on first.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::platform::home_dir().ok_or("could not find your home folder")?.join(".claude").join("projects");
+        let wanted = session.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let recent = crate::history::recent(&root, 8);
+        let found = recent
+            .iter()
+            .find(|s| match &wanted {
+                Some(id) => &s.id == id,
+                None => !s.title.as_deref().unwrap_or("").starts_with(reflect::MARKER),
+            })
+            .ok_or("no session found to reflect on")?;
+        let subject = reflect::Subject { id: found.id.clone(), cwd: found.cwd.clone(), topic: found.title.clone().unwrap_or_default() };
+        let persona = shared.settings.lock().unwrap().brain_persona;
+        let outcome = reflect::reflect(&vault, index_for(&shared, true).as_deref(), &subject, &vault::civil_date(), persona)?;
+        forget();
+        Ok(outcome)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The personality note as the UI shows it (empty until something was learned).
+#[tauri::command]
+pub async fn brain_persona(state: State<'_, Arc<Shared>>) -> Result<persona::View, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    tauri::async_runtime::spawn_blocking(move || persona::view(&vault)).await.map_err(|e| e.to_string())
 }
 
 /// Suggested links and tags for the user's own notes. Reads only; nothing is applied here.

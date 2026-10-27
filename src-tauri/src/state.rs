@@ -38,6 +38,10 @@ pub struct Settings {
     pub brain_inject_sessions: bool,
     /// Vault folders the brain never reads.
     pub brain_exclude: Vec<String>,
+    /// When a session ends, a small Haiku run reflects on it and writes lessons and to-dos under `Claude NPC/`.
+    pub brain_reflect: bool,
+    /// Reflections also note how the user likes to work, and that personality (`Personalidad.md`) is added to prompts.
+    pub brain_persona: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -69,6 +73,8 @@ impl Default for Settings {
             brain_enabled: false,
             brain_inject_sessions: false,
             brain_exclude: Vec::new(),
+            brain_reflect: false,
+            brain_persona: false,
         }
     }
 }

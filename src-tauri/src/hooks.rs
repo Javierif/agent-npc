@@ -134,12 +134,12 @@ fn hook(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
         "Stop" => {
             let session = shared.sessions.lock().unwrap().get(sid).cloned();
             if let Some(session) = session {
-                crate::brain::on_session(shared, session);
+                crate::brain::on_session(app, shared, session, false);
             }
         }
         "SessionEnd" => {
             if let Some(session) = ending {
-                crate::brain::on_session(shared, session);
+                crate::brain::on_session(app, shared, session, true);
             }
         }
         _ => {}

@@ -278,6 +278,8 @@ pub fn run() {
             brain::brain_status,
             brain::brain_search,
             brain::brain_remember,
+            brain::brain_reflect,
+            brain::brain_persona,
             brain::brain_suggestions,
             brain::brain_apply,
         ])

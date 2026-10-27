@@ -141,9 +141,14 @@ pub fn wrap_prompt(brief: &str, prompt: &str) -> String {
     format!("{brief}{BRIEF_SEP}{prompt}")
 }
 
+/// Whether a prompt already starts with the memory or personality block.
+pub fn is_wrapped(prompt: &str) -> bool {
+    prompt.starts_with(BRIEF_HEADER) || prompt.starts_with(super::persona::PERSONA_HEADER)
+}
+
 /// The request inside a prompt that [`wrap_prompt`] prefixed with memory.
 pub fn strip_brief(prompt: &str) -> &str {
-    if prompt.starts_with(BRIEF_HEADER) {
+    if is_wrapped(prompt) {
         prompt.split_once(BRIEF_SEP).map_or(prompt, |(_, rest)| rest)
     } else {
         prompt

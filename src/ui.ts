@@ -1,6 +1,6 @@
 import {
   api, errorText,
-  type BrainHit, type BrainProposal, type BrainStatus, type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
+  type BrainHit, type BrainProposal, type BrainStatus, type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PersonaView, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
 } from "./api";
 import { describeActivity } from "./activity";
 import { firstLine, renderMarkdown } from "./markdown";
@@ -974,6 +974,7 @@ export class Ui {
     let status: BrainStatus | null = null;
     let hits: BrainHit[] | null = null;
     let proposals: BrainProposal[] | null = null;
+    let persona: PersonaView | null = null;
     let error = "";
     const s = () => this.store.settings;
     const ask = h("input", { class: "field small", placeholder: t("Pregúntale al cerebro…") });
@@ -983,6 +984,7 @@ export class Ui {
 
     const load = async (refresh = false) => {
       try { status = await api.brainStatus(refresh); error = ""; } catch (err) { error = errorText(err); }
+      persona = await api.brainPersona().catch(() => null);
       draw();
     };
     const search = async () => {
@@ -1026,16 +1028,43 @@ export class Ui {
     ask.addEventListener("keydown", (event) => { if (event.key === "Enter") void search(); });
     remember.addEventListener("keydown", (event) => { if (event.key === "Enter") void save(); });
 
-    const check = (label: string, hint: string, key: "brainEnabled" | "brainInjectSessions", disabled = false) =>
+    let reflecting = false;
+    const reflect = async () => {
+      if (reflecting) return;
+      reflecting = true;
+      this.say(t("🪞 Pensando en tu última sesión…"), 4000);
+      try {
+        const out = await api.brainReflect();
+        const forged = out.promoted ? ` · ${t("🎭 {n} nuevo(s) en la personalidad", { n: out.promoted })}` : "";
+        this.say(t("🪞 {l} lecciones, {d} decisiones, {t} pendientes", { l: out.lessons, d: out.decisions, t: out.todos }) + forged, 6000);
+        await load(true);
+      } catch (err) { this.say(errorText(err), 7000); }
+      reflecting = false;
+    };
+
+    const check = (label: string, hint: string, key: "brainEnabled" | "brainInjectSessions" | "brainReflect" | "brainPersona", disabled = false) =>
       h("label", { class: "check" },
         h("input", { type: "checkbox", checked: s()[key], disabled, onchange: (e: Event) => void this.save({ [key]: (e.target as HTMLInputElement).checked }).then(() => load()) }),
         h("span", {}, label, h("div", { class: "muted small" }, hint)));
-    const kindIcon: Record<string, string> = { session: "🖥️", memory: "💭", project: "📁", diary: "📅" };
+    const kindIcon: Record<string, string> = { session: "🖥️", memory: "💭", reflection: "🪞", project: "📁", diary: "📅" };
 
     const draw = () => {
       const parts: Array<Node | string | false | null> = [
         check(t("Memoria activada"), t("Antes de cada tarea del NPC busca en tu vault lo relevante y, al terminar cada sesión de Claude Code, guarda una nota enlazada en «Claude NPC/». Nunca edita tus notas."), "brainEnabled"),
         check(t("También en tus sesiones de Claude Code"), t("Añade notas relevantes al contexto de cada mensaje que escribes en Claude Code. Esas notas se envían a Claude."), "brainInjectSessions", !s().brainEnabled),
+        check(t("Reflexionar al terminar cada sesión"), t("Un agente pequeño (Haiku, con tu `claude`) lee el final de la conversación y anota lecciones, decisiones y pendientes en «Claude NPC/». Gasta algo de tu cuota y envía esa conversación a Claude."), "brainReflect", !s().brainEnabled),
+        check(t("Forjar una personalidad"), t("Al reflexionar anota cómo te gusta trabajar. Lo que se repite en 2 sesiones pasa a «Claude NPC/Personalidad.md» y se añade a las tareas del NPC y, una vez por sesión, a Claude Code (si está activado arriba). Es un archivo que puedes editar."), "brainPersona", !s().brainEnabled),
+        h("div", { class: "row" }, h("button", { class: "btn", disabled: !s().brainEnabled, onclick: () => void reflect() }, `🪞 ${t("Reflexionar ahora")}`)),
+        persona && h("div", { class: "list" },
+          h("div", { class: "row" },
+            h("div", { class: "muted small grow" }, t("🎭 Personalidad")),
+            h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote("Claude NPC/Personalidad.md") }, "↗")),
+          persona.traits.length + persona.about.length === 0
+            ? h("div", { class: "muted small" }, t("Todavía no ha aprendido nada. Se forja con las reflexiones."))
+            : h("div", { class: "muted small" },
+                ...(persona.traits.length > 0 ? [h("div", {}, `${t("Rasgos")}: ${persona.traits.map((x) => clip(x, 70)).join(" · ")}`)] : []),
+                ...(persona.about.length > 0 ? [h("div", {}, `${t("Sobre ti")}: ${persona.about.map((x) => clip(x, 70)).join(" · ")}`)] : [])),
+          persona.pending > 0 && h("div", { class: "muted small" }, t("{n} observaciones esperando a repetirse", { n: persona.pending }))),
         error && h("div", { class: "muted small" }, error),
         status && h("div", { class: "row" },
           h("div", { class: "muted small grow" }, t("{notes} notas · {links} enlaces · {tags} etiquetas", { notes: status.notes, links: status.links, tags: status.tags })),
