@@ -1,6 +1,6 @@
 import {
   api, errorText,
-  type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
+  type BrainHit, type BrainProposal, type BrainStatus, type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
 } from "./api";
 import { describeActivity } from "./activity";
 import { firstLine, renderMarkdown } from "./markdown";
@@ -66,6 +66,7 @@ export interface Store {
 }
 
 type TabId = "tasks" | "sessions" | "vault" | "settings";
+type ObsView = "tasks" | "brain";
 type SettingsSection = "look" | "activity" | "claude" | "links";
 
 interface TabBody {
@@ -192,6 +193,7 @@ export class Ui {
   private readonly permsEl = h("div", { class: "perms" });
   private readonly fanEl = h("div", { class: "fan", "data-hit": "" });
   private tab: TabId | null = null;
+  private obsView: ObsView = "tasks";
   private body: TabBody | null = null;
   private hover = false;
   private closeTimer = 0;
@@ -365,8 +367,27 @@ export class Ui {
   /** Session whose child is speaking; null when the main character is. */
   private speaker: string | null = null;
 
+  /** True while the bubble shows a hover tip (the latest activity) rather than a real message. */
+  private hovering = false;
+
+  /** The latest activity of whoever the pointer rests on. It never replaces a real message. */
+  showHover(text: string, speaker: string | null) {
+    if (this.bubble.classList.contains("show") && !this.hovering) return;
+    window.clearTimeout(this.bubbleTimer);
+    this.hovering = true;
+    this.speaker = speaker;
+    this.bubble.textContent = text;
+    this.bubble.classList.add("show");
+  }
+
+  hideHover() {
+    if (!this.hovering) return;
+    this.hideBubble();
+  }
+
   showBubble(text: string, ms = 4000, speaker: string | null = null) {
     window.clearTimeout(this.bubbleTimer);
+    this.hovering = false;
     this.speaker = speaker;
     this.bubble.textContent = text;
     this.bubble.classList.add("show");
@@ -375,6 +396,7 @@ export class Ui {
 
   hideBubble() {
     window.clearTimeout(this.bubbleTimer);
+    this.hovering = false;
     this.bubble.classList.remove("show");
   }
 
@@ -884,6 +906,8 @@ export class Ui {
         if (action === "new") quick.value = "";
       } catch (err) { this.say(errorText(err), 6000); }
     };
+    const brain = this.brainView();
+    if (this.obsView === "brain") brain.load();
     const refresh = () => {
       const vault = this.store.settings.vaultPath;
       if (!vault) {
@@ -909,9 +933,20 @@ export class Ui {
       };
       add.addEventListener("keydown", (event) => { if (event.key === "Enter") void addTask(); });
       drawPicker();
+      const views: Array<[ObsView, string]> = [["tasks", t("Tareas")], ["brain", `🧠 ${t("Cerebro")}`]];
+      const subtabs = h("div", { class: "subtabs" }, ...views.map(([id, label]) =>
+        h("button", { class: `subtab${this.obsView === id ? " on" : ""}`, onclick: () => { this.obsView = id; refresh(); if (id === "brain") brain.load(); } }, h("span", {}, label))));
+      if (this.obsView === "brain") {
+        body.replaceChildren(
+          h("h3", {}, t("Obsidian")),
+          h("div", { class: "muted small" }, t("Vault: {name}", { name: baseName(vault) })),
+          subtabs, brain.el);
+        return;
+      }
       body.replaceChildren(
         h("h3", {}, t("Obsidian")),
         h("div", { class: "muted small" }, t("Vault: {name}", { name: baseName(vault) })),
+        subtabs,
         h("div", { class: "row" }, add, h("button", { class: "btn", onclick: () => void addTask() }, t("Añadir"))),
         h("div", { class: "row wrap" },
           h("button", { class: "btn", onclick: () => void quickAction("daily") }, `📅 ${t("Nota diaria")}`),
@@ -931,6 +966,111 @@ export class Ui {
       );
     };
     return { el: body, refresh };
+  }
+
+  /** The vault as the NPC's memory: switches, index figures, search, "remember this" and what it wrote last. */
+  private brainView(): { el: HTMLElement; load: () => void } {
+    const el = h("div", { class: "obs-brain" });
+    let status: BrainStatus | null = null;
+    let hits: BrainHit[] | null = null;
+    let proposals: BrainProposal[] | null = null;
+    let error = "";
+    const s = () => this.store.settings;
+    const ask = h("input", { class: "field small", placeholder: t("Pregúntale al cerebro…") });
+    const remember = h("input", { class: "field small", placeholder: t("Recuerda esto…") });
+    const exclude = h("input", { class: "field small", value: (s().brainExclude ?? []).join(", "), placeholder: t("Carpetas a excluir (separadas por comas)") });
+    exclude.addEventListener("change", () => void this.save({ brainExclude: exclude.value.split(",").map((x) => x.trim()).filter(Boolean) }).then(() => load(true)));
+
+    const load = async (refresh = false) => {
+      try { status = await api.brainStatus(refresh); error = ""; } catch (err) { error = errorText(err); }
+      draw();
+    };
+    const search = async () => {
+      const query = ask.value.trim();
+      if (!query) return;
+      try { hits = await api.brainSearch(query); error = ""; } catch (err) { error = errorText(err); }
+      draw();
+    };
+    const save = async () => {
+      const text = remember.value.trim();
+      if (!text) return;
+      try {
+        const path = await api.brainRemember(text);
+        remember.value = "";
+        this.say(t("✔ Guardado en {path}", { path }), 5000);
+        await load();
+      } catch (err) { this.say(errorText(err), 6000); }
+    };
+    const suggest = async () => {
+      try { proposals = await api.brainSuggestions(); error = ""; } catch (err) { error = errorText(err); }
+      draw();
+    };
+    const apply = async (proposal: BrainProposal) => {
+      try {
+        await api.brainApply(proposal);
+        proposals = (proposals ?? []).filter((p) => p !== proposal);
+        this.say(t("✔ Aplicado en {title}", { title: proposal.title }), 4000);
+        draw();
+      } catch (err) { this.say(errorText(err), 6000); }
+    };
+    const proposalRow = (proposal: BrainProposal) =>
+      h("div", { class: "item" },
+        h("div", { class: "item-main" },
+          h("div", { class: "item-title" }, clip(proposal.title, 50)),
+          h("div", { class: "muted small" }, proposal.kind === "link" ? t("Enlazar «{target}»", { target: proposal.target }) : t("Añadir la etiqueta #{target}", { target: proposal.target })),
+          proposal.kind === "link" && h("div", { class: "diff del small" }, `− ${clip(proposal.before.trim(), 90)}`),
+          h("div", { class: "diff add small" }, `+ ${clip(proposal.kind === "link" ? proposal.after.trim() : proposal.after, 90)}`)),
+        h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote(proposal.path) }, "↗"),
+        h("button", { class: "btn", title: t("Descartar"), onclick: () => { proposals = (proposals ?? []).filter((p) => p !== proposal); draw(); } }, "✕"),
+        h("button", { class: "btn ok", onclick: () => void apply(proposal) }, t("Aplicar")));
+    ask.addEventListener("keydown", (event) => { if (event.key === "Enter") void search(); });
+    remember.addEventListener("keydown", (event) => { if (event.key === "Enter") void save(); });
+
+    const check = (label: string, hint: string, key: "brainEnabled" | "brainInjectSessions", disabled = false) =>
+      h("label", { class: "check" },
+        h("input", { type: "checkbox", checked: s()[key], disabled, onchange: (e: Event) => void this.save({ [key]: (e.target as HTMLInputElement).checked }).then(() => load()) }),
+        h("span", {}, label, h("div", { class: "muted small" }, hint)));
+    const kindIcon: Record<string, string> = { session: "🖥️", memory: "💭", project: "📁", diary: "📅" };
+
+    const draw = () => {
+      const parts: Array<Node | string | false | null> = [
+        check(t("Memoria activada"), t("Antes de cada tarea del NPC busca en tu vault lo relevante y, al terminar cada sesión de Claude Code, guarda una nota enlazada en «Claude NPC/». Nunca edita tus notas."), "brainEnabled"),
+        check(t("También en tus sesiones de Claude Code"), t("Añade notas relevantes al contexto de cada mensaje que escribes en Claude Code. Esas notas se envían a Claude."), "brainInjectSessions", !s().brainEnabled),
+        error && h("div", { class: "muted small" }, error),
+        status && h("div", { class: "row" },
+          h("div", { class: "muted small grow" }, t("{notes} notas · {links} enlaces · {tags} etiquetas", { notes: status.notes, links: status.links, tags: status.tags })),
+          h("button", { class: "btn", title: t("Reindexar"), onclick: () => void load(true) }, "↻")),
+        h("div", { class: "row" }, ask, h("button", { class: "btn", onclick: () => void search() }, `🔍 ${t("Buscar")}`)),
+        hits && h("div", { class: "list" },
+          ...hits.map((hit) =>
+            h("div", { class: "item" },
+              h("div", { class: "item-main" },
+                h("div", { class: "item-title" }, hit.title),
+                h("div", { class: "muted small" }, clip(hit.excerpt, 110)),
+                h("div", { class: "muted small" }, hit.via ? t("enlazada con {title}", { title: hit.via }) : t("coincide: {terms}", { terms: hit.matched.join(", ") }))),
+              h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote(hit.path) }, "↗"))),
+          hits.length === 0 && h("div", { class: "muted" }, t("Sin resultados."))),
+        h("div", { class: "row" }, remember, h("button", { class: "btn", onclick: () => void save() }, t("Guardar"))),
+        h("div", { class: "row" },
+          h("div", { class: "grow" }, t("✨ Propuestas para tus notas")),
+          h("button", { class: "btn", onclick: () => void suggest() }, t("Buscar enlaces y etiquetas"))),
+        proposals && h("div", { class: "list" },
+          ...proposals.map(proposalRow),
+          proposals.length === 0 ? h("div", { class: "muted" }, t("Nada que proponer por ahora."))
+            : h("div", { class: "muted small" }, t("Solo se escribe si la nota sigue igual. Nunca se aplica nada solo."))),
+        exclude,
+        h("div", { class: "muted small" }, t("Las notas con «claude: false» en su cabecera tampoco se leen.")),
+        status && status.recent.length > 0 && h("div", { class: "list" },
+          h("div", { class: "muted small" }, t("Lo último que escribí")),
+          ...status.recent.map((note) =>
+            h("div", { class: "item" },
+              h("div", { class: "item-main" }, h("div", { class: "item-title" }, `${kindIcon[note.kind] ?? "📄"} ${clip(note.title, 60)}`)),
+              h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote(note.path) }, "↗")))),
+      ];
+      el.replaceChildren(...parts.filter((part): part is Node | string => !!part));
+    };
+    draw();
+    return { el, load: () => void load() };
   }
 
   private settingsTab(): TabBody {

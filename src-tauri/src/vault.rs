@@ -20,7 +20,7 @@ use crate::state::Shared;
 const TAG: &str = "#claude";
 const INBOX: &str = "Claude NPC Inbox.md";
 const MAX_FILES: usize = 20_000;
-const MAX_FILE_BYTES: u64 = 1_000_000;
+pub(crate) const MAX_FILE_BYTES: u64 = 1_000_000;
 const MAX_RESULT_CHARS: usize = 4_000;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -32,7 +32,7 @@ pub struct VaultTask {
     pub text: String,
 }
 
-fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
     if out.len() >= MAX_FILES {
         return;
     }
@@ -97,7 +97,7 @@ pub fn scan(vault: &Path) -> Vec<VaultTask> {
     tasks
 }
 
-fn civil_date() -> String {
+pub(crate) fn civil_date() -> String {
     // Days since 1970-01-01 -> proleptic Gregorian date (UTC).
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -115,7 +115,16 @@ fn civil_date() -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
+/// Current time of day as `HH:MM` (UTC, like `civil_date`).
+pub(crate) fn civil_hm() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{:02}:{:02}", secs / 3_600 % 24, secs / 60 % 60)
+}
+
+pub(crate) fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     let tmp = path.with_extension("md.claude-npc.tmp");
     fs::write(&tmp, content).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| {

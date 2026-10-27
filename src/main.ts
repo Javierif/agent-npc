@@ -17,7 +17,7 @@ const store: Store = {
   settings: {
     vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, theme: "postie", mini: false,
     telegramToken: "", telegramChatId: "", remoteView: false, remoteToken: "", slackWebhook: "", feishuWebhook: "", language: "auto",
-    activity: 50, obsidianFavorites: [],
+    activity: 50, obsidianFavorites: [], brainEnabled: false, brainInjectSessions: false, brainExclude: [],
   },
   pets: [],
   usage: null,
@@ -116,6 +116,7 @@ npc.el.style.visibility = "hidden";
 store.children.onChange = () => {
   followers.sync(store.sessions, store.children);
   ui.refresh();
+  updateMood();
 };
 
 const stage = h("div", { id: "stage" }, followers.el, npc.el, ui.root, ui.bubble);
@@ -128,15 +129,17 @@ let errorUntil = 0;
 
 function computeMood(): Mood {
   const now = performance.now();
-  if (store.perms.length > 0) return "waiting";
-  if (store.sessions.some((s) => s.state === "attention")) return "waiting";
+  // Whatever a session with a child on screen does is the child's feeling, not the leader's.
+  const own = store.sessions.filter((s) => !followers.has(s.id));
+  if (store.perms.some((p) => !followers.has(p.sessionId))) return "waiting";
+  if (own.some((s) => s.state === "attention")) return "waiting";
   if (now < errorUntil) return "error";
-  const working = store.sessions.some((s) => s.state === "working") || store.tasks.some((t) => t.status === "running" && t.usingTool);
+  const working = own.some((s) => s.state === "working") || store.tasks.some((t) => t.status === "running" && t.usingTool);
   if (working) {
-    const subagents = store.sessions.reduce((n, s) => n + s.subagents, 0);
+    const subagents = own.reduce((n, s) => n + s.subagents, 0);
     return subagents > 0 ? "juggling" : "working";
   }
-  if (store.sessions.some((s) => s.state === "thinking") || store.tasks.some((t) => t.status === "running")) return "thinking";
+  if (own.some((s) => s.state === "thinking") || store.tasks.some((t) => t.status === "running")) return "thinking";
   if (now < doneUntil) return "done";
   return "idle";
 }
@@ -156,6 +159,7 @@ void on<Session[]>("sessions", (sessions) => {
   followers.sync(sessions, store.children);
   ui.refresh();
   updateMood();
+  refreshHover();
 });
 
 void on<AgentEvent>("agent-event", (event) => {
@@ -163,15 +167,17 @@ void on<AgentEvent>("agent-event", (event) => {
   const who = followers.boundsOf(event.sessionId) ? event.sessionId : null;
   switch (event.event) {
     case "PreToolUse":
-      npc.pulse();
-      ui.showBubble(describeActivity(event.tool, event.detail), 2500, who);
+      // No bubble for every tool call: the last one shows when the pointer rests on its character.
+      if (!who) npc.pulse();
       break;
     case "PostToolUseFailure":
-      errorUntil = performance.now() + ERROR_MS;
+      if (who) followers.feel(who, "error", ERROR_MS);
+      else errorUntil = performance.now() + ERROR_MS;
       ui.showBubble(t("Uy, algo falló…"), 3000, who);
       break;
     case "Stop":
-      doneUntil = performance.now() + DONE_MS;
+      if (who) followers.feel(who, "done", DONE_MS);
+      else doneUntil = performance.now() + DONE_MS;
       ui.showBubble(event.message ? `✔ ${firstLine(event.message).slice(0, 110)}` : t("✔ ¡Listo!"), 5000, who);
       break;
     case "Notification":
@@ -208,6 +214,10 @@ void on<TaskUpdate>("task-update", (update) => {
     }
   }
   updateMood();
+});
+
+void on<{ titles: string[] }>("brain-recall", ({ titles }) => {
+  if (titles.length > 0) ui.showBubble(t("🧠 Me acordé de: {titles}", { titles: titles.slice(0, 2).join(", ") }), 5000);
 });
 
 let announcedVaultTasks = -1;
@@ -271,7 +281,35 @@ function frame(time: number) {
   requestAnimationFrame(frame);
 }
 
+let pointer: [number, number] | null = null;
+
+/** While the pointer rests on a character, a bubble tells the last thing it did; it goes away when it leaves. */
+function refreshHover() {
+  if (!pointer) return;
+  const [x, y] = pointer;
+  const childId = followers.sessionAt(x, y);
+  let text = "";
+  let speaker: string | null = null;
+  if (childId) {
+    const s = store.sessions.find((x) => x.id === childId);
+    if (s?.tool) text = describeActivity(s.tool, s.detail);
+    speaker = childId;
+  } else {
+    const b = npc.bounds();
+    if (x >= b.x && x <= b.x + b.w && y >= b.top && y <= b.top + b.h) {
+      const latest = store.sessions
+        .filter((s) => s.tool && !followers.has(s.id))
+        .sort((a, b) => b.updatedMs - a.updatedMs)[0];
+      if (latest) text = describeActivity(latest.tool, latest.detail);
+    }
+  }
+  if (text) ui.showHover(text, speaker);
+  else ui.hideHover();
+}
+
 const onPointer = (x: number, y: number) => {
+  pointer = [x, y];
+  refreshHover();
   followers.watch(x, y);
   npc.calm = followers.pointerNear;
   npc.watch(x, y);

@@ -32,6 +32,12 @@ pub struct Settings {
     pub max_children: u8,
     /// Obsidian palette commands shown as buttons in the Obsidian panel (run through its CLI).
     pub obsidian_favorites: Vec<ObsidianFavorite>,
+    /// The vault as memory: recall in tasks and write session notes under `Claude NPC/`.
+    pub brain_enabled: bool,
+    /// Also add memory to the prompts of Claude Code sessions (through the hook reply).
+    pub brain_inject_sessions: bool,
+    /// Vault folders the brain never reads.
+    pub brain_exclude: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -60,6 +66,9 @@ impl Default for Settings {
             activity: 50,
             max_children: 8,
             obsidian_favorites: Vec::new(),
+            brain_enabled: false,
+            brain_inject_sessions: false,
+            brain_exclude: Vec::new(),
         }
     }
 }

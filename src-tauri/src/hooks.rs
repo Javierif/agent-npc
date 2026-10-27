@@ -126,11 +126,32 @@ fn hook(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
         return json!({}); // not a Claude Code hook payload; ignore instead of clearing the UI
     }
     log_hook(shared, event, payload);
+    let sid = payload["session_id"].as_str().unwrap_or("unknown");
+    // The session leaves the map when it ends; the vault note still needs what it held.
+    let ending = if event == "SessionEnd" { shared.sessions.lock().unwrap().get(sid).cloned() } else { None };
     update_session(app, shared, event, payload);
-    if event == "PermissionRequest" {
-        permission(app, shared, payload)
-    } else {
-        json!({})
+    match event {
+        "Stop" => {
+            let session = shared.sessions.lock().unwrap().get(sid).cloned();
+            if let Some(session) = session {
+                crate::brain::on_session(shared, session);
+            }
+        }
+        "SessionEnd" => {
+            if let Some(session) = ending {
+                crate::brain::on_session(shared, session);
+            }
+        }
+        _ => {}
+    }
+    match event {
+        "PermissionRequest" => permission(app, shared, payload),
+        // Memory from the vault goes to Claude as extra context, only when the user switched that on.
+        "UserPromptSubmit" => match crate::brain::hook_context(app, shared, payload) {
+            Some(context) => json!({ "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": context } }),
+            None => json!({}),
+        },
+        _ => json!({}),
     }
 }
 
@@ -302,7 +323,9 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
                     session.state = "thinking".into();
                     session.tool = None;
                     session.detail = None;
-                    if let Some(prompt) = payload["prompt"].as_str().map(str::trim).filter(|p| !p.is_empty()) {
+                    // A task the NPC started carries a memory block before the request; the topic is the request.
+                    let prompt = payload["prompt"].as_str().map(crate::brain::recall::strip_brief);
+                    if let Some(prompt) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
                         if session.topic.is_none() {
                             session.topic = Some(truncate(prompt, 140));
                         }

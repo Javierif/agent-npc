@@ -52,6 +52,8 @@ class Follower {
   private sink = 0;
   private lie = 0;
   private asleepFor = 0;
+  private feeling: "done" | "error" | null = null;
+  private feelingUntil = 0;
   private canvasTransform = "";
   private readonly phase = Math.random() * 4;
 
@@ -146,10 +148,21 @@ class Follower {
     return this.leaving;
   }
 
+  /** A short feeling of its own (it finished, something failed), shown over what its session is doing. */
+  feel(kind: "done" | "error", ms: number) {
+    this.feeling = kind;
+    this.feelingUntil = performance.now() + ms;
+  }
+
   /** Calm on purpose: slow frames, and mostly just standing there blinking. */
   private statePose(clock: number): Pose {
     const frame = (a: Pose, b: Pose, period: number): Pose => (Math.floor(clock / period) % 2 === 0 ? a : b);
     const s = this.session;
+    if (this.feeling && performance.now() >= this.feelingUntil) this.feeling = null;
+    if (this.feeling === "error") return "sad";
+    if (this.feeling === "done" && s.state !== "working" && s.state !== "thinking") {
+      return (["dance1", "dance2", "dance3", "dance2"] as const)[Math.floor(clock / 0.3) % 4];
+    }
     switch (s.state) {
       case "working": return s.subagents > 0 ? frame("juggle1", "juggle2", 0.9) : frame("work1", "work2", 0.6);
       case "thinking": return (["think1", "think2", "think3"] as const)[Math.floor(clock / 1.2) % 3];
@@ -232,12 +245,29 @@ export class Followers {
     this.pointerNearNow = [...this.all.values()].some((f) => f.near(x, y, 28, window.innerHeight));
   }
 
+  /** The session whose child the point is on, if any. */
+  sessionAt(x: number, y: number): string | null {
+    for (const [id, f] of this.all) if (f.near(x, y, 4, window.innerHeight)) return id;
+    return null;
+  }
+
   get pointerNear(): boolean {
     return this.pointerNearNow;
   }
 
   redraw() {
     for (const f of this.all.values()) f.redraw();
+  }
+
+  /** Does this session have a child on screen? Its work is then the child's, not the leader's. */
+  has(sessionId: string): boolean {
+    const f = this.all.get(sessionId);
+    return !!f && !f.isLeaving;
+  }
+
+  /** Makes the child of that session feel something, without touching the leader or its siblings. */
+  feel(sessionId: string, kind: "done" | "error", ms: number) {
+    this.all.get(sessionId)?.feel(kind, ms);
   }
 
   /** Where the child of a session stands, or null when that session has no visible child. */

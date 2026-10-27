@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 
 const log: Array<{ cmd: string; args: unknown }> = [];
-let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50, obsidianFavorites: [{ id: "daily-notes:open", label: "Nota diaria" }] };
+let settings = { vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, activity: 50, obsidianFavorites: [{ id: "daily-notes:open", label: "Nota diaria" }], brainEnabled: true, brainInjectSessions: false, brainExclude: [] as string[] };
 let hooks = false;
 
 mockIPC((cmd, args) => {
@@ -17,6 +17,23 @@ mockIPC((cmd, args) => {
     case "uninstall_hooks": hooks = false; return null;
     case "scan_vault": return [{ file: "Ideas/proyecto.md", line: 4, text: "Resumir las notas de la reunión" }];
     case "detect_vaults": return ["C:/Users/demo/Notes"];
+    case "brain_status": return {
+      enabled: true, injectSessions: false, hasVault: true, notes: 128, links: 342, tags: 21, builtMs: Date.now(),
+      recent: [
+        { path: "Claude NPC/Sesiones/2026-10-26 Revisar el presupuesto (abcdef12).md", title: "2026-10-26 Revisar el presupuesto (abcdef12)", kind: "session", mtimeS: 1 },
+        { path: "Claude NPC/Memoria/Atlas se entrega en marzo.md", title: "Atlas se entrega en marzo", kind: "memory", mtimeS: 1 },
+      ],
+    };
+    case "brain_search": return [
+      { path: "Ideas/Presupuesto.md", title: "Presupuesto", excerpt: "El presupuesto anual del proyecto Atlas", matched: ["presupuesto"], via: null, score: 3 },
+      { path: "Atlas.md", title: "Atlas", excerpt: "Plan general de la web nueva", matched: [], via: "Presupuesto", score: 1 },
+    ];
+    case "brain_suggestions": return [
+      { kind: "link", path: "Reunión.md", title: "Reunión", target: "Atlas", line: 3, before: "Hablamos del atlas ayer.", after: "Hablamos del [[Atlas|atlas]] ayer." },
+      { kind: "tag", path: "Ideas/Recetas de pasta.md", title: "Recetas de pasta", target: "recetas", line: 0, before: "", after: "tags: [recetas]" },
+    ];
+    case "brain_apply": return null;
+    case "brain_remember": return "Claude NPC/Memoria/Nota.md";
     case "obsidian_uri": return null;
     case "obsidian_run_command": return null;
     case "obsidian_commands": return [

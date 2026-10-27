@@ -1,4 +1,5 @@
 pub mod bridge;
+mod brain;
 mod history;
 mod hooks;
 mod notify;
@@ -77,6 +78,7 @@ fn update_settings(settings: Settings, state: State<Arc<Shared>>) -> Result<Sett
         // ever generated here, so neither can be changed from the UI.
         let mut merged = Settings { port: current.port, remote_token: current.remote_token.clone(), ..settings };
         merged.obsidian_favorites = obsidian::clean_favorites(merged.obsidian_favorites);
+        merged.brain_exclude = brain::clean_exclude(merged.brain_exclude);
         if merged.remote_view && merged.remote_token.is_empty() {
             merged.remote_token = remote::new_token();
         }
@@ -273,6 +275,11 @@ pub fn run() {
             obsidian::obsidian_uri,
             obsidian::obsidian_commands,
             obsidian::obsidian_run_command,
+            brain::brain_status,
+            brain::brain_search,
+            brain::brain_remember,
+            brain::brain_suggestions,
+            brain::brain_apply,
         ])
         .setup(move |app| {
             let config_path = app.path().app_config_dir()?.join("settings.json");
@@ -285,6 +292,7 @@ pub fn run() {
             window.show()?;
             spawn_hit_test(window, app.state::<HitState>().inner().clone());
 
+            brain::warm(&shared);
             hooks::start_server(app.handle().clone(), shared.clone());
             telegram::start(shared.clone());
             if let Err(err) = remote::apply(&shared) {

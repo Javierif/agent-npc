@@ -20,6 +20,49 @@ export interface Settings {
   activity: number;
   /** Obsidian palette commands shown as buttons (run through Obsidian's CLI). */
   obsidianFavorites: ObsidianFavorite[];
+  /** The vault as memory: recall in tasks and session notes under "Claude NPC/". */
+  brainEnabled: boolean;
+  /** Also add memory to Claude Code prompts through the hook reply. */
+  brainInjectSessions: boolean;
+  brainExclude: string[];
+}
+
+export interface BrainHit {
+  path: string;
+  title: string;
+  excerpt: string;
+  matched: string[];
+  via: string | null;
+  score: number;
+}
+
+/** A change to one of the user's notes, applied only when they press *Aplicar*. */
+export interface BrainProposal {
+  kind: "link" | "tag";
+  path: string;
+  title: string;
+  target: string;
+  line: number;
+  before: string;
+  after: string;
+}
+
+export interface BrainNote {
+  path: string;
+  title: string;
+  kind: "session" | "memory" | "project" | "diary";
+  mtimeS: number;
+}
+
+export interface BrainStatus {
+  enabled: boolean;
+  injectSessions: boolean;
+  hasVault: boolean;
+  notes: number;
+  links: number;
+  tags: number;
+  builtMs: number;
+  recent: BrainNote[];
 }
 
 export interface ObsidianFavorite {
@@ -164,6 +207,11 @@ export const api = {
   vaultAddTask: (text: string) => invoke("vault_add_task", { text }),
   obsidianUri: (action: ObsidianAction, text?: string) => invoke("obsidian_uri", { action, text }),
   obsidianCommands: () => invoke<ObsidianCommand[]>("obsidian_commands"),
+  brainStatus: (refresh = false) => invoke<BrainStatus>("brain_status", { refresh }),
+  brainSearch: (query: string) => invoke<BrainHit[]>("brain_search", { query }),
+  brainRemember: (text: string) => invoke<string>("brain_remember", { text }),
+  brainSuggestions: () => invoke<BrainProposal[]>("brain_suggestions"),
+  brainApply: (proposal: BrainProposal) => invoke("brain_apply", { proposal }),
   obsidianRunCommand: (id: string) => invoke("obsidian_run_command", { id }),
   focusSession: (cwd: string) => invoke<boolean>("focus_session", { cwd }),
   installTheme: (url: string) => invoke<CustomTheme>("install_theme", { url }),

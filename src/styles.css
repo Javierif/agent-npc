@@ -845,3 +845,26 @@ kbd {
 .hat canvas {
   image-rendering: pixelated;
 }
+
+.grow {
+  flex: 1;
+}
+
+.obs-brain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff {
+  font-family: ui-monospace, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.diff.del {
+  color: #c0392b;
+}
+
+.diff.add {
+  color: #2e8b57;
+}

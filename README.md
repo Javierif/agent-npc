@@ -18,6 +18,8 @@ Estado: **MVP**. Probado en Windows 11; macOS y Linux están escritos pero sin p
 | Cuota | Anillos de uso de las ventanas de 5 h y 7 d y del contexto (ver *Cuota*). |
 | Mandar tareas | Escribes una tarea y el NPC lanza `claude -p` en la carpeta que elijas, muestra el progreso y deja el resultado como una nota adhesiva. *Continuar* en una tarea terminada bien reanuda su conversación (`claude --resume`); *Reintentar* en una fallida reenvía el mismo prompt, carpeta y sesión. Las respuestas se muestran con Markdown básico (títulos, listas, código, tablas, enlaces), sin HTML. |
 | Obsidian | Apunta a tu vault. Cualquier `- [ ] algo #claude` de tus notas aparece en el panel; con ▶ Claude lo hace y **escribe la respuesta bajo la tarea y la marca como hecha**. También puedes añadir tareas desde el NPC a una bandeja (`Claude NPC Inbox.md`). Funciona sobre los archivos, sin plugin. Además, el panel tiene botones para la nota diaria, buscar y crear una nota nueva (por URI `obsidian://`), y hasta 6 comandos favoritos de Obsidian que se ejecutan con su CLI oficial (ver *Obsidian*). |
+| Propuestas para tus notas | En *Obsidian → Cerebro*, sugiere enlazar menciones de otras notas y añadir etiquetas frecuentes a las que no tienen. Muestra el diff y solo escribe con *Aplicar*. Ver *Cerebro*. |
+| Memoria | Opcional (apagada por defecto): tu vault de Obsidian como memoria. Antes de cada tarea del NPC, y en tus sesiones de Claude Code si lo activas, añade las notas relevantes al contexto; al terminar una sesión escribe una nota enlazada en `Claude NPC/`. Ver *Cerebro*. |
 | Otros agentes | Puentes para Gemini CLI, Cursor y Codex, y un endpoint HTTP genérico (`/agent`) para cualquier otra herramienta (ver más abajo). |
 | Aprobar desde Telegram | Cada petición de permiso llega al bot con botones Permitir/Denegar. |
 | Avisos en Slack y Feishu | Notificación cuando se pide un permiso y cuando una sesión termina. |
@@ -50,6 +52,23 @@ En el mismo panel:
 - **★** elige hasta 6 comandos de la paleta de Obsidian como botones (por ejemplo, abrir la nota diaria). Se ejecutan con la CLI oficial de Obsidian (`obsidian vault=<tu vault> command id=<id>`), que requiere **Obsidian 1.12.7 o superior** con la CLI activada en Obsidian; en Windows el NPC usa `Obsidian.com`. Solo se ejecutan los comandos que hayas guardado como favoritos, con un tiempo máximo de 10 s.
 
 Si la CLI no está instalada o no responde en 10 s, el NPC muestra el error.
+
+### Cerebro (memoria del vault)
+
+Opcional y apagado por defecto. Con el vault configurado, en el panel **Obsidian → Cerebro** activa *Memoria activada* (`brainEnabled`):
+
+- **Tareas del NPC:** antes de lanzar `claude -p`, busca en el vault las notas relacionadas con lo que pides y las añade al prompt en un bloque «Memoria del usuario (Obsidian)», que Claude debe tratar como datos y no como instrucciones. Si la vault no es la carpeta de trabajo, se le da acceso con `--add-dir`.
+- **Sesiones de Claude Code:** con *También en tus sesiones de Claude Code* (`brainInjectSessions`, que exige lo anterior), cada mensaje que escribes recibe notas relevantes a través del hook `UserPromptSubmit`. No se aplica a las ejecuciones en segundo plano, a los comandos `/` ni a las tareas que ya llevan ese bloque.
+- **Lo que escribe:** al terminar un turno de Claude Code (`Stop`) o cerrar la sesión, crea o actualiza `Claude NPC/Sesiones/<fecha> <tema> (<id>).md` con lo pedido y la respuesta, enlazada desde `Claude NPC/Proyectos/` y `Claude NPC/Diario/<fecha>.md`. *Recordar* guarda un dato en `Claude NPC/Memoria/`. Solo actualiza las notas que generó el NPC: si borras la línea `<!-- claude-npc:auto -->` de una nota de sesión, deja de tocarla. Nunca escribe fuera de `Claude NPC/` ni edita tus notas por su cuenta (la excepción son las propuestas de abajo, que solo aplicas tú).
+- **Propuestas para tus notas:** en la sección *✨ Propuestas para tus notas* pulsa *Buscar enlaces y etiquetas*. No depende de *Memoria activada* (solo necesita el vault configurado) y no escribe nada hasta que pulses *Aplicar*. Hay dos tipos, cada uno con su diff:
+  - **Enlazar:** envuelve en `[[enlace]]` la primera mención sin enlazar del título de otra nota (por ejemplo, «atlas» → `[[Atlas]]`). Ignora código, enlaces que ya existen, URLs, encabezados y las notas de `Claude NPC/`. Solo usa títulos únicos de al menos 4 letras, hasta 3 por nota.
+  - **Etiquetar:** añade al frontmatter una etiqueta frecuente (usada en al menos 3 notas) a las notas que no tienen ninguna. Si la nota no tiene cabecera, la crea.
+
+  Se revisan hasta 400 notas, las más recientes, y se proponen como máximo 40 cambios. *Aplicar* relee la nota y solo escribe si la línea propuesta sigue exactamente igual; si la nota ha cambiado, no escribe y te pide que busques de nuevo. Nunca toca `Claude NPC/`, conserva los saltos de línea CRLF y guarda de forma atómica. *Descartar* quita la propuesta de la lista sin tocar nada.
+- **Lo que lee:** títulos, alias, `#etiquetas` y `[[enlaces]]` (con sus backlinks) de hasta 20 000 notas, sin embeddings: búsqueda BM25 que además sigue un salto de enlaces. Se salta las carpetas de *Carpetas a excluir*, las notas con `claude: false` en su cabecera y los archivos de más de 1 MB; no toma enlaces ni etiquetas de los bloques de código. El índice vive en memoria y se reconstruye en segundo plano cada 60 s.
+- Las fechas y horas de las notas están en UTC.
+
+Nada de esto está probado con Obsidian ni con Claude Code reales (ver *Qué se ha comprobado*).
 
 ### Cuota
 
@@ -155,12 +174,14 @@ curl -X POST http://127.0.0.1:47650/agent -d '{"agent":"codex","session_id":"1",
 - Al escribir en una nota, si cambió mientras Claude trabajaba, se vuelve a localizar la tarea por su texto; si ya no está, no se escribe nada.
 - Los comandos de Obsidian no pasan por una shell: solo se ejecutan los ids guardados como favoritos, validados (letras, números, `-`, `_`, `.` y `:`).
 - El diagnóstico de eventos (*Ver eventos recibidos*) vive solo en memoria y no guarda prompts ni entradas de herramientas.
+- La memoria del vault está apagada por defecto. Lo que recupera (fragmentos de tus notas) se envía a Claude, y una nota puede contener texto que intente dar instrucciones: el bloque lo marca como datos, pero no hay garantía. Activa *También en tus sesiones de Claude Code* solo si confías en el contenido de tus notas. El hook `UserPromptSubmit` solo devuelve contexto con esa opción activa.
+- La memoria escribe solo dentro de `Claude NPC/`, con nombres saneados, y nunca edita tus notas. La única excepción son las propuestas para tus notas: cambian una línea de una nota (o añaden una etiqueta a su cabecera) solo cuando pulsas *Aplicar*, y solo si la nota no ha cambiado desde que se propuso.
 
 ## Pruebas
 
 ```bash
 npm run test:ui       # interfaz: traducciones completas y coherentes en los 5 idiomas
-npm run test          # Rust: hooks, permisos, vault, acciones de Obsidian (URIs, parser de comandos), Telegram y webhooks (contra servidores simulados), puentes, vista móvil, temas, parser de claude
+npm run test          # Rust: hooks, permisos, vault, memoria del vault (índice, recall, captura), propuestas para tus notas, acciones de Obsidian (URIs, parser de comandos), Telegram y webhooks (contra servidores simulados), puentes, vista móvil, temas, parser de claude
 npx tsc --noEmit      # tipos del frontend
 ```
 
@@ -171,7 +192,7 @@ Para ver la interfaz sin Tauri: `npx vite` y abre `http://localhost:1420/tests/p
 - **En la app real de Windows** (inspeccionando su webview): el overlay se carga, el click-through se activa solo sobre el personaje, el flujo hook → tarjeta → Permitir/Denegar → respuesta HTTP, el flujo de tareas con escritura en una vault temporal, Telegram, Slack y Feishu contra servidores simulados, los puentes de Gemini, Cursor y Codex con cargas de ejemplo, los endpoints `/agent` y `/usage`, la vista del móvil en loopback, los temas (incluido uno propio), el modo mini, el seguimiento de ojos, que *Terminal* encuentra una ventana real por el nombre de la carpeta, la importación de un pet de Codex (sintético) con cada estado en la fila de animación que le toca, la instalación de un tema por URL, el cambio de idioma y su persistencia.
 - **Con un `claude` de pega** que emite el mismo JSON (`--output-format stream-json`): el runner y la reescritura de la nota. No con el modelo real: la sesión de este entorno tenía el OAuth caducado.
 - **Sin comprobar:** Don Hámster (y su chiste propio) solo se ha verificado con `tsc`, `npm run test:ui` y la vista previa con `mockIPC`; no se ha visto en la app real. Obsidian real (solo carpetas con el mismo formato); los atajos *Nota diaria*, *Buscar* y *Nota nueva* (`obsidian://`) y los comandos favoritos por la CLI oficial de Obsidian (`command id=`, Obsidian 1.12.7+): solo tienen tests unitarios del parser, las URIs, la validación de ids y el runner, y el formato de `obsidian commands` es una suposición; que Claude Code, Gemini CLI, Cursor y Codex reales llamen a los hooks tal como indica su documentación, la `statusLine` en una sesión viva, *Continuar* / *Escribir* (`--resume`) con un `claude` real, también sobre sesiones creadas en Claude Desktop, el login desde la NPC (*Iniciar sesión*), los atajos globales pulsados con teclado real, los bots reales de Telegram/Slack/Feishu, la vista del móvil desde un teléfono, que una sesión retomada con `--resume` siga viva durante una tarea real (la ejecución en segundo plano no debe hacerla desaparecer de *Sesiones*; arreglado, sin probar en la app), que Windows conceda el foco al traer una ventana al frente (si lo niega, parpadea en la barra de tareas), macOS y Linux.
-- **Solo con tests unitarios y la vista previa con `mockIPC`** (no con Claude real): responder preguntas (`AskUserQuestion`, con `updatedInput.answers`) y aprobar planes (`ExitPlanMode`) desde el panel de la sesión; que las sesiones de Claude Desktop envíen el hook `PermissionRequest`; la sección *Recientes* con un historial grande; *Reintentar*; el diagnóstico *Ver eventos recibidos* con eventos reales de Claude Desktop (probado con tests unitarios y la vista previa, no con eventos reales).
+- **Solo con tests unitarios y la vista previa con `mockIPC`** (no con Claude real): responder preguntas (`AskUserQuestion`, con `updatedInput.answers`) y aprobar planes (`ExitPlanMode`) desde el panel de la sesión; que las sesiones de Claude Desktop envíen el hook `PermissionRequest`; la sección *Recientes* con un historial grande; *Reintentar*; el diagnóstico *Ver eventos recibidos* con eventos reales de Claude Desktop (probado con tests unitarios y la vista previa, no con eventos reales); la memoria del vault (*Cerebro*: índice, recall, notas de sesión y el contexto que se inyecta por el hook), que solo tiene tests unitarios y la vista previa con `mockIPC`: no se ha comprobado con Obsidian real ni con Claude Code real, incluido que Claude Code acepte `additionalContext` de un hook HTTP y el efecto del recall en las respuestas; las propuestas para tus notas (enlaces y etiquetas, y *Aplicar* sobre notas reales), que solo tienen tests unitarios y no se han visto en la vista previa.
 
 ## Alcance frente a clawd-on-desk
 
@@ -195,6 +216,7 @@ Para ver la interfaz sin Tauri: `npx vite` y abre `http://localhost:1420/tests/p
 | Varios idiomas | ✅ 5 idiomas |
 | **Enviar tareas a Claude** | ✅ (clawd-on-desk no lo hace) |
 | **Obsidian** | ✅ (clawd-on-desk no lo tiene) |
+| **Memoria desde el vault** | ◐ opcional y sin probar con Obsidian ni Claude Code reales (clawd-on-desk no lo tiene) |
 
 ## Licencias
 

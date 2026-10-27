@@ -89,10 +89,20 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
         return Err("empty task".into());
     }
     let dir = resolve_dir(&shared, task.cwd.clone(), task.vault.is_some())?;
-    let allow_edits = shared.settings.lock().unwrap().allow_edits;
+    let (allow_edits, brain_vault) = {
+        let settings = shared.settings.lock().unwrap();
+        let vault = settings.vault_path.trim().to_string();
+        (settings.allow_edits, (settings.brain_enabled && !vault.is_empty()).then_some(vault))
+    };
 
     let mut cmd = claude_command();
     cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--allowedTools", SAFE_TOOLS]);
+    // The memory block names notes by path: let Claude read them even when the task runs elsewhere.
+    if let Some(vault) = &brain_vault {
+        if PathBuf::from(vault) != dir && PathBuf::from(vault).is_dir() {
+            cmd.args(["--add-dir", vault.as_str()]);
+        }
+    }
     if allow_edits {
         cmd.args(["--permission-mode", "acceptEdits"]);
     }
@@ -132,7 +142,11 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
         ),
         None => prompt,
     };
+    let memory_app = app.clone();
+    let memory_shared = shared.clone();
     thread::spawn(move || {
+        // Looking up memory may build the index, so it happens here and not before `claude` starts.
+        let full_prompt = crate::brain::task_prompt(&memory_app, &memory_shared, &full_prompt);
         let _ = stdin.write_all(full_prompt.as_bytes());
     });
 
