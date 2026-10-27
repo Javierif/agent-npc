@@ -18,10 +18,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    capture::{append_line, find_session_note, own_path, project_name, safe_name, yaml_quote, AUTO_MARKER, WRITE_LOCK},
+    capture::{append_line, find_session_note, own_path, project_name, safe_name, set_session_summary, yaml_quote, AUTO_MARKER, WRITE_LOCK},
     index::{fold, Index, BRAIN_DIR},
     persona,
     recall::{brief, recall},
+    strength,
 };
 use crate::{history, platform, vault::write_atomic};
 
@@ -46,6 +47,14 @@ struct Item {
     title: String,
     text: String,
     links: Vec<String>,
+    /// 1-5; how much it should weigh in the future. Out of range or missing means normal (3).
+    importance: Option<i64>,
+}
+
+impl Item {
+    fn importance(&self) -> u8 {
+        self.importance.map_or(3, |n| n.clamp(1, 5) as u8)
+    }
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -85,7 +94,7 @@ fn build_prompt(subject: &Subject, excerpt: &str, memory: Option<&str>, persona:
     let (persona_rule, persona_json, persona_section) = match persona {
         Some(current) => (
             "- \"persona\": at most 3 observations about how this user likes to work or be spoken to, useful to adapt the assistant's tone and style. \
-kind \"trait\" = how the companion should behave (brevity, humour, level of detail, language); kind \"user\" = a work habit or preference of the user. \
+kind \"trait\" = how the companion should behave (brevity, humour, level of detail, language); kind \"user\" = a work habit or preference of the user; kind \"value\" = something the user cares about in their work (accuracy, brevity, safety, craft). \
 Only what this conversation clearly shows. Never record health, finances, politics, religion, identity, relationships or anything private. \
 If a CANDIDATE in CURRENT PERSONALITY shows up again, repeat its text exactly. Do not repeat anything already under Traits or About the user.\n",
             ", \"persona\": [{\"kind\": \"trait\", \"text\": \"short observation\"}]",
@@ -104,10 +113,12 @@ Rules:\n\
 a decision is a choice made with its reason; a to-do is something left unfinished or to follow up. Empty lists are fine.\n\
 - Never copy secrets, tokens or passwords.\n\
 - In \"links\" use only titles of notes listed under EXISTING NOTES, exactly as written.\n\
+- \"importance\" (1-5) is how much a lesson or decision should weigh later: 5 = the user corrected Claude, stated a firm rule \
+or something went badly wrong; 3 = normal; 1 = minor detail.\n\
 {persona_rule}\n\
 Reply with ONLY one JSON object, no prose, no code fence:\n\
-{{\"summary\": \"2-3 sentences\", \"lessons\": [{{\"title\": \"short title\", \"text\": \"1-3 sentences\", \"links\": []}}], \
-\"decisions\": [{{\"title\": \"\", \"text\": \"\", \"links\": []}}], \"todos\": [\"short action\"]{persona_json}}}\n\n\
+{{\"summary\": \"2-3 sentences\", \"lessons\": [{{\"title\": \"short title\", \"text\": \"1-3 sentences\", \"links\": [], \"importance\": 3}}], \
+\"decisions\": [{{\"title\": \"\", \"text\": \"\", \"links\": [], \"importance\": 3}}], \"todos\": [\"short action\"]{persona_json}}}\n\n\
 === EXISTING NOTES ===\n{memory}\n\n{persona_section}=== CONVERSATION ===\n{excerpt}\n",
         project = project_name(&subject.cwd),
         memory = memory.unwrap_or("(none)"),
@@ -226,6 +237,9 @@ fn write_memory(vault: &Path, kind: &str, item: &Item, known: &HashSet<String>, 
         if !content.contains(AUTO_MARKER) || content.contains(&text) {
             return Ok(Some(title)); // the user took it over, or it is already there
         }
+        // Seeing it again in another session renews the memory.
+        let rel = format!("{BRAIN_DIR}/Memoria/{title}.md");
+        let _ = strength::reinforce(vault, &[rel], strength::today());
         if !content.ends_with('\n') {
             content.push('\n');
         }
@@ -233,7 +247,10 @@ fn write_memory(vault: &Path, kind: &str, item: &Item, known: &HashSet<String>, 
         write_atomic(&path, &content)?;
         return Ok(Some(title));
     }
-    let mut body = format!("---\ntype: {kind}\ndate: {date}\ntags: [claude-{kind}]\n---\n{AUTO_MARKER}\n# {title}\n\n{text}\n");
+    let mut body = format!(
+        "---\ntype: {kind}\ndate: {date}\nimportance: {}\ntags: [claude-{kind}]\n---\n{AUTO_MARKER}\n# {title}\n\n{text}\n",
+        item.importance()
+    );
     if let Some(source) = source {
         body.push_str(&format!("\n**Origen:** [[{source}]]\n"));
     }
@@ -305,6 +322,13 @@ fn write_reflection(vault: &Path, index: Option<&Index>, subject: &Subject, refl
         }
         write_atomic(&note_path, &body)?;
         note = Some(format!("{BRAIN_DIR}/Reflexiones/{stem}.md"));
+    }
+    if let Some(session) = &session_stem {
+        let learned: Vec<String> = lessons.iter().chain(&decisions).cloned().collect();
+        if !summary.is_empty() || !learned.is_empty() {
+            let path = vault.join(BRAIN_DIR).join("Sesiones").join(format!("{session}.md"));
+            set_session_summary(&path, &summary, &learned)?;
+        }
     }
     if !todos.is_empty() {
         let list = own_path(vault, "", "Pendientes")?;
@@ -396,10 +420,10 @@ mod tests {
         let reflection = Reflection {
             summary: "Se revisó el presupuesto.".into(),
             lessons: vec![
-                Item { title: "Comprobar cifras [[x]]".into(), text: "Mira siempre el total.".into(), links: vec!["Presupuesto".into(), "Inventada".into(), "../../etc".into()] },
-                Item { title: "  ".into(), text: "sin título".into(), links: vec![] },
+                Item { title: "Comprobar cifras [[x]]".into(), text: "Mira siempre el total.".into(), links: vec!["Presupuesto".into(), "Inventada".into(), "../../etc".into()], ..Default::default() },
+                Item { title: "  ".into(), text: "sin título".into(), links: vec![], ..Default::default() },
             ],
-            decisions: vec![Item { title: "Usar euros".into(), text: "Todo en EUR #claude".into(), links: vec![] }],
+            decisions: vec![Item { title: "Usar euros".into(), text: "Todo en EUR #claude".into(), links: vec![], ..Default::default() }],
             todos: vec!["Enviar el informe #claude".into(), "".into()],
             ..Default::default()
         };
@@ -432,7 +456,7 @@ mod tests {
         assert_eq!(out, Outcome::default());
         assert!(!vault.join("Claude NPC").exists());
 
-        let reflection = Reflection { lessons: vec![Item { title: "Mía".into(), text: "otra cosa".into(), links: vec![] }], ..Default::default() };
+        let reflection = Reflection { lessons: vec![Item { title: "Mía".into(), text: "otra cosa".into(), links: vec![], ..Default::default() }], ..Default::default() };
         let path = own_path(&vault, "Memoria", "Mía").unwrap();
         fs::write(&path, "# Mía\nescrita por el usuario\n").unwrap();
         write_reflection(&vault, None, &subject(), &reflection, "2026-10-27").unwrap();

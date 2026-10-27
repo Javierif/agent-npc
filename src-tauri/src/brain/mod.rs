@@ -4,12 +4,15 @@
 //! Everything is opt-in (`brainEnabled`) and local; with it off nothing here runs.
 
 pub mod ask;
+pub mod associations;
 pub mod capture;
+pub mod dream;
 pub mod index;
 pub mod persona;
 pub mod recall;
 pub mod reflect;
 pub mod review;
+pub mod strength;
 pub mod suggest;
 
 use std::{
@@ -144,7 +147,7 @@ pub fn project_of(cwd: &str) -> String {
 /// Whether a prompt is one of the brain's own model runs (reflection, question, weekly review):
 /// hooks ignore them, so they never show up as sessions, notes or notifications.
 pub fn is_internal(prompt: &str) -> bool {
-    [reflect::MARKER, ask::MARKER, review::MARKER].iter().any(|m| prompt.starts_with(m))
+    [reflect::MARKER, ask::MARKER, review::MARKER, dream::MARKER].iter().any(|m| prompt.starts_with(m))
 }
 
 /// The memory block for `query` and the titles of the notes in it; `None` when nothing matches.
@@ -157,6 +160,16 @@ fn prompt_brief(shared: &Shared, query: &str, project: Option<&str>, wait: bool)
     let index = index_for(shared, wait)?;
     let hits = recall_in(&index, &query, BRIEF_HITS, project);
     let text = brief(&hits, BRIEF_CHARS)?;
+    // What is recalled is renewed: it will fade more slowly.
+    if let Some((vault, _)) = config(shared) {
+        let paths: Vec<String> = hits.iter().map(|h| h.path.clone()).collect();
+        let today = strength::today();
+        let _ = strength::reinforce(&vault, &paths, today);
+        // Notes recalled together grow towards each other; a new association needs a fresh index to count.
+        if associations::record(&vault, &paths, today).is_ok_and(|fresh| !fresh.is_empty()) {
+            forget();
+        }
+    }
     Some((text, hits.into_iter().map(|h| h.title).collect()))
 }
 
@@ -249,10 +262,17 @@ pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended
             eprintln!("claude-npc: could not write the session note: {err}");
         }
         let _ = capture::ensure_panel(&vault);
-        let (reflecting, persona) = {
+        let (reflecting, persona, forgetting) = {
             let s = shared.settings.lock().unwrap();
-            (s.brain_reflect, s.brain_persona)
+            (s.brain_reflect, s.brain_persona, s.brain_forget)
         };
+        if ended && forgetting {
+            if let Some(index) = index.as_deref() {
+                if strength::archive_weak(&vault, index, strength::today()).is_ok_and(|moved| !moved.is_empty()) {
+                    forget();
+                }
+            }
+        }
         if ended && reflecting && !reflect::cwd_excluded(&vault, &exclude, &session.cwd) {
             let subject = reflect::Subject { id: session.id.clone(), cwd: session.cwd.clone(), topic: session.topic.clone().unwrap_or_default() };
             // Too short a conversation or a busy reflector is normal, not worth reporting.
@@ -263,6 +283,13 @@ pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended
                 if let Ok(week) = review::weekly(&vault, vault::today_days(), false) {
                     forget();
                     let _ = app.emit("brain-weekly", &week);
+                }
+                // Once a week the lessons are consolidated into principles and habits.
+                if let Some(index) = index_for(&shared, false) {
+                    if let Ok(slept) = dream::dream(&vault, &index, vault::today_days(), false, persona) {
+                        forget();
+                        let _ = app.emit("brain-dreamt", &slept);
+                    }
                 }
             }
         }
@@ -336,6 +363,8 @@ pub struct BrainStatus {
     pub tags: usize,
     pub built_ms: u64,
     pub recent: Vec<RecentNote>,
+    /// Memories that faded away into `Claude NPC/Archivo/`.
+    pub archived: usize,
 }
 
 fn status(shared: &Shared, refresh: bool) -> BrainStatus {
@@ -357,6 +386,7 @@ fn status(shared: &Shared, refresh: bool) -> BrainStatus {
         tags: index.as_ref().map_or(0, |i| i.tag_count()),
         built_ms: index.as_ref().map_or(0, |i| i.built_ms),
         recent: recent_notes(&vault),
+        archived: strength::archived_count(&vault),
     }
 }
 
@@ -457,6 +487,25 @@ pub async fn brain_weekly(force: Option<bool>, state: State<'_, Arc<Shared>>) ->
     }
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = review::weekly(&vault, vault::today_days(), force.unwrap_or(true))?;
+        forget();
+        Ok(outcome)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// "Consolidar": Haiku distils the lessons into principles and habits; `force` redoes this week's pass.
+#[tauri::command]
+pub async fn brain_dream(force: Option<bool>, state: State<'_, Arc<Shared>>) -> Result<dream::DreamOutcome, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    if !shared.settings.lock().unwrap().brain_enabled {
+        return Err("Turn the memory on first.".into());
+    }
+    let story = shared.settings.lock().unwrap().brain_persona;
+    tauri::async_runtime::spawn_blocking(move || {
+        let index = index_for(&shared, true).ok_or("no vault configured")?;
+        let outcome = dream::dream(&vault, &index, vault::today_days(), force.unwrap_or(true), story)?;
         forget();
         Ok(outcome)
     })

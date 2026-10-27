@@ -72,6 +72,7 @@ pub fn recall_in(index: &Index, query: &str, k: usize, project: Option<&str>) ->
     }
     let n = index.notes.len() as f32;
     let now_s = crate::hooks::now_ms() / 1000;
+    let today = now_s / 86_400;
     let idf: Vec<(&String, f32)> = terms
         .iter()
         .filter_map(|t| index.df.get(t).map(|&df| (t, (1.0 + (n - df as f32 + 0.5) / (df as f32 + 0.5)).ln())))
@@ -79,6 +80,9 @@ pub fn recall_in(index: &Index, query: &str, k: usize, project: Option<&str>) ->
 
     let mut scores: HashMap<usize, (f32, Vec<String>)> = HashMap::new();
     for (i, note) in index.notes.iter().enumerate() {
+        if note.weight <= 0.0 {
+            continue; // archived: forgotten
+        }
         let mut score = 0.0;
         let mut matched = Vec::new();
         for (term, idf) in &idf {
@@ -88,7 +92,7 @@ pub fn recall_in(index: &Index, query: &str, k: usize, project: Option<&str>) ->
             }
         }
         if score > 0.0 {
-            score *= note.weight;
+            score *= note.weight * super::strength::factor(note, today);
             if now_s.saturating_sub(note.mtime_s) < RECENT_SECS {
                 score *= 1.1;
             }
@@ -103,16 +107,31 @@ pub fn recall_in(index: &Index, query: &str, k: usize, project: Option<&str>) ->
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0))); // ties keep note order, not hash order
     let seeds: Vec<(usize, f32)> = ranked.iter().take(k.max(3)).copied().collect();
 
+    // Activation spreads from the best matches along links and associations, weaker at each hop.
     let mut via: HashMap<usize, (f32, usize)> = HashMap::new();
-    for &(seed, score) in seeds.iter().take(3) {
-        for &nb in index.out[seed].iter().chain(&index.inn[seed]) {
-            if scores.contains_key(&nb) {
+    let spread = |from: usize, score: f32, via: &mut HashMap<usize, (f32, usize)>| -> Vec<(usize, f32)> {
+        let mut reached = Vec::new();
+        for &nb in index.out[from].iter().chain(&index.inn[from]).chain(&index.assoc[from]) {
+            if scores.contains_key(&nb) || index.notes[nb].weight <= 0.0 {
                 continue;
             }
-            let inherited = score * NEIGHBOUR_SHARE * index.notes[nb].weight;
+            let inherited = score * NEIGHBOUR_SHARE * index.notes[nb].weight * super::strength::factor(&index.notes[nb], today);
             if via.get(&nb).is_none_or(|&(best, _)| inherited > best) {
-                via.insert(nb, (inherited, seed));
+                via.insert(nb, (inherited, from));
+                reached.push((nb, inherited));
             }
+        }
+        reached
+    };
+    let mut first_hop: Vec<(usize, f32)> = Vec::new();
+    for &(seed, score) in seeds.iter().take(3) {
+        first_hop.extend(spread(seed, score, &mut via));
+    }
+    first_hop.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    first_hop.dedup_by_key(|(i, _)| *i);
+    for (mid, score) in first_hop.into_iter().take(3) {
+        if via.get(&mid).is_some_and(|&(best, _)| best == score) {
+            spread(mid, score, &mut via);
         }
     }
 
@@ -194,7 +213,8 @@ mod tests {
         let mut df: HashMap<String, u32> = HashMap::new();
         notes.iter().for_each(|n| n.terms.keys().for_each(|t| *df.entry(t.clone()).or_insert(0) += 1));
         let avg_len = notes.iter().map(|n| n.len).sum::<f32>() / notes.len() as f32;
-        Index { notes, out, inn, df, avg_len, built_ms: 0 }
+        let assoc = vec![Vec::new(); notes.len()];
+        Index { notes, out, inn, assoc, df, avg_len, built_ms: 0 }
     }
 
     #[test]
@@ -211,6 +231,49 @@ mod tests {
         let linked = hits.iter().find(|h| h.title == "Atlas").expect("neighbour");
         assert_eq!(linked.via.as_deref(), Some("Reunion Ana"));
         assert!(hits.iter().all(|h| h.title != "Cocina"));
+    }
+
+    #[test]
+    fn faded_memories_rank_lower_and_archived_ones_never_appear() {
+        let today = crate::hooks::now_ms() / 1000 / 86_400;
+        let mut idx = index(&[
+            ("Claude NPC/Memoria/Vieja.md", "Revisar el presupuesto cada mes."),
+            ("Claude NPC/Memoria/Nueva.md", "Revisar el presupuesto cada mes."),
+            ("Claude NPC/Archivo/Olvidada.md", "Revisar el presupuesto cada mes."),
+        ]);
+        idx.notes[0].mtime_s = (today - 300) * 86_400;
+        idx.notes[1].mtime_s = today * 86_400;
+        let hits = recall(&idx, "presupuesto", 5);
+        assert_eq!(hits[0].title, "Nueva");
+        assert!(hits[0].score > hits[1].score * 1.2, "{hits:?}");
+        assert!(hits.iter().all(|h| h.title != "Olvidada"));
+        // Recalling the old one renews it: its score climbs back (the newer note still has its recency bonus).
+        let before = hits.iter().find(|h| h.title == "Vieja").unwrap().score;
+        idx.notes[0].uses = 3;
+        idx.notes[0].last_used = Some(today);
+        let after = recall(&idx, "presupuesto", 5).iter().find(|h| h.title == "Vieja").unwrap().score;
+        assert!(after > before * 1.5, "{before} -> {after}");
+    }
+
+    #[test]
+    fn activation_reaches_two_hops_and_follows_associations() {
+        let mut idx = index(&[
+            ("Reunion.md", "Acordamos el presupuesto del proyecto. Ver [[Atlas]]."),
+            ("Atlas.md", "Plan general de la web nueva. Ver [[Fase dos]]."),
+            ("Fase dos.md", "Segunda entrega."),
+            ("Lejana.md", "Nada que ver."),
+            ("Compras.md", "Lista de la compra."),
+        ]);
+        let hits = recall(&idx, "presupuesto", 5);
+        let two = hits.iter().find(|h| h.title == "Fase dos").expect("second hop");
+        assert_eq!(two.via.as_deref(), Some("Atlas"));
+        assert!(two.score < hits.iter().find(|h| h.title == "Atlas").unwrap().score, "weaker at each hop");
+        assert!(hits.iter().all(|h| h.title != "Lejana" && h.title != "Compras"));
+        // An association (notes recalled together) pulls a note in like a link would.
+        idx.assoc[0].push(4);
+        idx.assoc[4].push(0);
+        let hits = recall(&idx, "presupuesto", 5);
+        assert_eq!(hits.iter().find(|h| h.title == "Compras").and_then(|h| h.via.clone()).as_deref(), Some("Reunion"));
     }
 
     #[test]

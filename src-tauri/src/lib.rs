@@ -280,6 +280,7 @@ pub fn run() {
             brain::brain_remember,
             brain::brain_reflect,
             brain::brain_persona,
+            brain::brain_dream,
             brain::brain_ask,
             brain::brain_weekly,
             brain::brain_maintenance,

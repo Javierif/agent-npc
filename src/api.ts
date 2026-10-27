@@ -29,6 +29,8 @@ export interface Settings {
   brainReflect: boolean;
   /** Reflections also note how the user likes to work; that personality is added to prompts. */
   brainPersona: boolean;
+  /** What the NPC learned and never uses again fades and moves to `Claude NPC/Archivo/`. */
+  brainForget: boolean;
 }
 
 /** What one reflection wrote under "Claude NPC/". */
@@ -47,6 +49,16 @@ export interface ReflectOutcome {
 export interface BrainAnswer {
   text: string;
   sources: Array<{ title: string; path: string }>;
+}
+
+/** What one consolidation ("sleep") wrote. */
+export interface DreamOutcome {
+  note: string;
+  principles: number;
+  habits: number;
+  conflicts: number;
+  /** Whether the personality's story was rewritten. */
+  story: boolean;
 }
 
 /** What a weekly review wrote. */
@@ -70,6 +82,8 @@ export interface MaintenanceNotice {
 export interface PersonaView {
   traits: string[];
   about: string[];
+  /** What the user cares about at work. */
+  values: string[];
   pending: number;
 }
 
@@ -109,6 +123,8 @@ export interface BrainStatus {
   tags: number;
   builtMs: number;
   recent: BrainNote[];
+  /** Memories that faded into `Claude NPC/Archivo/`. */
+  archived: number;
 }
 
 export interface ObsidianFavorite {
@@ -260,6 +276,7 @@ export const api = {
   brainPersona: () => invoke<PersonaView>("brain_persona"),
   brainAsk: (question: string) => invoke<BrainAnswer>("brain_ask", { question }),
   brainWeekly: (force = true) => invoke<WeeklyOutcome>("brain_weekly", { force }),
+  brainDream: (force = true) => invoke<DreamOutcome>("brain_dream", { force }),
   brainMaintenance: () => invoke<MaintenanceNotice[]>("brain_maintenance"),
   brainPanel: () => invoke<string>("brain_panel"),
   brainSuggestions: () => invoke<BrainProposal[]>("brain_suggestions"),

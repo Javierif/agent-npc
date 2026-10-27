@@ -18,8 +18,9 @@ use crate::{state::Session, vault::write_atomic};
 /// First line after the frontmatter of a note the NPC may keep updating. Delete it to take the note over.
 pub const AUTO_MARKER: &str = "<!-- claude-npc:auto -->";
 const MAX_NAME_CHARS: usize = 50;
-const MAX_PROMPT_CHARS: usize = 600;
-const MAX_MESSAGE_CHARS: usize = 3_000;
+const MAX_LOG_LINES: usize = 60;
+const LOG_PROMPT_CHARS: usize = 110;
+const LOG_ANSWER_CHARS: usize = 140;
 const MAX_RELATED: usize = 5;
 
 /// Writers run one at a time so two quick `Stop` events never interleave on a file.
@@ -82,10 +83,6 @@ pub(super) fn append_line(path: &Path, header: &str, needle: &str, line: &str) -
     write_atomic(path, &content)
 }
 
-fn quote(text: &str) -> String {
-    text.lines().map(|l| format!("> {l}").trim_end().to_string()).collect::<Vec<_>>().join("\n")
-}
-
 pub(super) fn project_name(cwd: &str) -> String {
     let folder = cwd.rsplit(['/', '\\']).find(|p| !p.is_empty()).unwrap_or("");
     let name = safe_name(folder, 40);
@@ -116,6 +113,96 @@ fn related_titles(index: Option<&Index>, session: &Session, own_stem: &str) -> V
         .collect()
 }
 
+/// Body of the `## heading` section of a note, without the heading, or `None` when missing or empty.
+pub(super) fn section(content: &str, heading: &str) -> Option<String> {
+    let title = format!("## {heading}");
+    let mut lines = content.lines().skip_while(|l| l.trim_end() != title);
+    lines.next()?;
+    let body: Vec<&str> = lines.take_while(|l| !l.starts_with("## ")).collect();
+    let text = body.join("\n").trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// `content` with the `## heading` section replaced by `body` (or added), placed before the first
+/// of the `before` headings that exists, else at the end. Other sections are left as they are.
+pub(super) fn with_section(content: &str, heading: &str, body: &str, before: &[&str]) -> String {
+    let title = format!("## {heading}");
+    let mut kept: Vec<&str> = Vec::new();
+    let mut skipping = false;
+    for line in content.lines() {
+        if line.starts_with("## ") {
+            skipping = line.trim_end() == title;
+        }
+        if !skipping {
+            kept.push(line);
+        }
+    }
+    let at = kept.iter().position(|l| before.iter().any(|h| l.trim_end() == format!("## {h}"))).unwrap_or(kept.len());
+    let mut out: Vec<String> = kept[..at].iter().map(|s| s.to_string()).collect();
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out.extend([String::new(), title, body.trim().to_string()]);
+    let rest = &kept[at..];
+    if !rest.is_empty() {
+        out.push(String::new());
+        out.extend(rest.iter().map(|s| s.to_string()));
+    }
+    let mut text = out.join("\n");
+    text.push('\n');
+    text
+}
+
+/// First line of an answer that says something, flattened for a one-line log entry.
+fn answer_snippet(message: &str) -> String {
+    let line = message
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*', ' ']).trim())
+        .find(|l| !l.is_empty() && !l.starts_with("```"))
+        .unwrap_or("");
+    super::reflect::clean_text(line, LOG_ANSWER_CHARS)
+}
+
+/// Adds this turn to the session log: one line with time, what was asked and how Claude began to
+/// answer. A second `Stop` for the same prompt refreshes the last line instead of adding another.
+fn update_log(old: Option<String>, hm: &str, prompt: &str, message: Option<&str>) -> Vec<String> {
+    let mut lines: Vec<String> = old.iter().flat_map(|o| o.lines()).filter(|l| l.starts_with("- ")).map(String::from).collect();
+    let asked = super::reflect::clean_text(prompt, LOG_PROMPT_CHARS);
+    let answer = message.map(answer_snippet).unwrap_or_default();
+    let tail = |time: &str| {
+        let mut line = format!("- {time} · {asked}");
+        if !answer.is_empty() {
+            line.push_str(&format!(" → {answer}"));
+        }
+        line
+    };
+    let same_turn = lines.last().and_then(|l| l.strip_prefix("- ")).and_then(|l| l.split_once(" · ")).map(|(time, rest)| {
+        let was = rest.split_once(" → ").map_or(rest, |(p, _)| p);
+        (was == asked, time.to_string())
+    });
+    match same_turn {
+        Some((true, time)) => *lines.last_mut().unwrap() = tail(&time),
+        _ => lines.push(tail(hm)),
+    }
+    let extra = lines.len().saturating_sub(MAX_LOG_LINES);
+    lines.drain(..extra);
+    lines
+}
+
+/// Puts the reflection's summary (and links to what it learned) at the top of the session note.
+/// Does nothing when the note is missing or the user took it over. The caller holds `WRITE_LOCK`.
+pub(super) fn set_session_summary(note: &Path, summary: &str, links: &[String]) -> Result<(), String> {
+    let Ok(content) = fs::read_to_string(note) else { return Ok(()) };
+    if !content.contains(AUTO_MARKER) {
+        return Ok(());
+    }
+    let mut body = summary.trim().to_string();
+    for link in links {
+        body.push_str(&format!("\n- [[{link}]]"));
+    }
+    write_if_changed(note, &with_section(&content, "Resumen", &body, &["Bitácora", "Notas relacionadas"]))
+}
+
 /// Writes or refreshes the note of `session` and links it from its project note and the daily log.
 /// Returns the note's path relative to the vault, or `None` when there was nothing to write.
 pub fn session_note(vault: &Path, index: Option<&Index>, session: &Session, date: &str, hm: &str) -> Result<Option<String>, String> {
@@ -143,17 +230,21 @@ pub fn session_note(vault: &Path, index: Option<&Index>, session: &Session, date
     let project_stem = format!("Proyecto - {project}");
     let related = related_titles(index, session, &stem);
 
+    // The note is rewritten on every `Stop`; the log and the summary written after a reflection are kept.
+    let old = if fresh { None } else { fs::read_to_string(&path).ok() };
+    let summary = old.as_deref().and_then(|c| section(c, "Resumen"));
+    let log = update_log(old.as_deref().and_then(|c| section(c, "Bitácora")), hm, session.prompt.as_deref().unwrap_or(topic), session.message.as_deref());
+
     let mut body = format!(
         "---\ntype: session\nsession: {id8}\nproject: {}\ncwd: {}\ndate: {date}\ntags: [claude-session]\n---\n{AUTO_MARKER}\n# {}\n\n**Proyecto:** [[{project_stem}]]\n",
         yaml_quote(&project),
         yaml_quote(&session.cwd),
         safe_name(topic, 80),
     );
-    let prompt = session.prompt.as_deref().unwrap_or(topic);
-    body.push_str(&format!("\n## Qué se pidió\n{}\n", quote(&prompt.chars().take(MAX_PROMPT_CHARS).collect::<String>())));
-    if let Some(message) = session.message.as_deref().filter(|m| !m.trim().is_empty()) {
-        body.push_str(&format!("\n## Respuesta de Claude\n{}\n", quote(&message.chars().take(MAX_MESSAGE_CHARS).collect::<String>())));
+    if let Some(summary) = summary {
+        body.push_str(&format!("\n## Resumen\n{summary}\n"));
     }
+    body.push_str(&format!("\n## Bitácora\n{}\n", log.join("\n")));
     if !related.is_empty() {
         body.push_str("\n## Notas relacionadas\n");
         for title in &related {
@@ -201,7 +292,8 @@ pub fn remember(vault: &Path, index: Option<&Index>, text: &str, date: &str) -> 
         let related: Vec<String> = index
             .map(|i| recall(i, text, 4).into_iter().filter(|h| h.title != name).map(|h| h.title).take(3).collect())
             .unwrap_or_default();
-        let mut body = format!("---\ntype: memory\ndate: {date}\ntags: [claude-memory]\n---\n{AUTO_MARKER}\n# {name}\n\n{text}\n");
+        // Saved on purpose, so it weighs more than what a reflection picked up by itself.
+        let mut body = format!("---\ntype: memory\ndate: {date}\nimportance: 4\ntags: [claude-memory]\n---\n{AUTO_MARKER}\n# {name}\n\n{text}\n");
         if !related.is_empty() {
             body.push_str("\n## Relacionado\n");
             for title in &related {
@@ -328,6 +420,52 @@ mod tests {
         assert!(!vault.join("Claude NPC/Diario/2026-10-27.md").exists());
         assert_eq!(fs::read_dir(vault.join("Claude NPC/Sesiones")).unwrap().count(), 1);
         let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn the_session_note_is_a_log_and_keeps_its_summary() {
+        let vault = temp_vault("log");
+        let mut s = session("abcdef12-3456", "Revisar el presupuesto");
+        s.message = Some("## Resultado\n\nHe revisado [[Atlas]] #claude y todo cuadra.".into());
+        let rel = session_note(&vault, None, &s, "2026-10-26", "09:30").unwrap().unwrap();
+        // The same prompt stopping again refreshes the line; a new prompt adds one.
+        s.message = Some("Listo, todo cuadra.".into());
+        session_note(&vault, None, &s, "2026-10-26", "09:35").unwrap();
+        s.prompt = Some("Ahora el informe".into());
+        s.message = Some("Informe hecho".into());
+        session_note(&vault, None, &s, "2026-10-26", "09:50").unwrap();
+        let path = vault.join(&rel);
+        let note = fs::read_to_string(&path).unwrap();
+        let log = section(&note, "Bitácora").unwrap();
+        assert_eq!(log.lines().count(), 2, "{log}");
+        assert!(log.contains("- 09:30 · Revisar el presupuesto → Listo, todo cuadra.") && log.contains("- 09:50 · Ahora el informe → Informe hecho"), "{log}");
+        assert!(!note.contains("Respuesta de Claude"));
+
+        // The reflection's summary goes on top and survives the next refresh.
+        set_session_summary(&path, "Se revisó el presupuesto.", &["Lección uno".to_string()]).unwrap();
+        s.prompt = Some("Y las notas".into());
+        session_note(&vault, None, &s, "2026-10-26", "10:00").unwrap();
+        let note = fs::read_to_string(&path).unwrap();
+        let (resumen, bitacora) = (note.find("## Resumen").unwrap(), note.find("## Bitácora").unwrap());
+        assert!(resumen < bitacora && note.contains("- [[Lección uno]]") && note.contains("Se revisó el presupuesto."), "{note}");
+        assert_eq!(section(&note, "Bitácora").unwrap().lines().count(), 3);
+        // A second summary replaces the first one.
+        set_session_summary(&path, "Otro resumen.", &[]).unwrap();
+        let note = fs::read_to_string(&path).unwrap();
+        assert_eq!(note.matches("## Resumen").count(), 1);
+        assert!(note.contains("Otro resumen.") && !note.contains("Se revisó"));
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn the_log_keeps_only_the_latest_lines() {
+        let mut log: Option<String> = None;
+        for i in 0..70 {
+            log = Some(update_log(log, "09:00", &format!("pregunta {i}"), None).join("\n"));
+        }
+        let lines = log.unwrap();
+        assert_eq!(lines.lines().count(), MAX_LOG_LINES);
+        assert!(lines.contains("pregunta 69") && !lines.contains("pregunta 0 "));
     }
 
     #[test]

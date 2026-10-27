@@ -88,7 +88,7 @@ mod tests {
     fn index(notes: &[(&str, &str)]) -> Index {
         let notes: Vec<_> = notes.iter().filter_map(|(p, c)| parse_note(p, c, 0)).collect();
         let n = notes.len();
-        Index { notes, out: vec![Vec::new(); n], inn: vec![Vec::new(); n], df: Default::default(), avg_len: 1.0, built_ms: 0 }
+        Index { notes, out: vec![Vec::new(); n], inn: vec![Vec::new(); n], assoc: vec![Vec::new(); n], df: Default::default(), avg_len: 1.0, built_ms: 0 }
     }
 
     #[test]

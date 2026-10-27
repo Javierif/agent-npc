@@ -42,6 +42,8 @@ pub struct Settings {
     pub brain_reflect: bool,
     /// Reflections also note how the user likes to work, and that personality (`Personalidad.md`) is added to prompts.
     pub brain_persona: bool,
+    /// Memories the NPC wrote and never used again fade and move to `Claude NPC/Archivo/` when a session ends.
+    pub brain_forget: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -75,6 +77,7 @@ impl Default for Settings {
             brain_exclude: Vec::new(),
             brain_reflect: false,
             brain_persona: false,
+            brain_forget: false,
         }
     }
 }

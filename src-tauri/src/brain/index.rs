@@ -38,12 +38,19 @@ pub struct Note {
     /// Folder weight: the NPC's own session notes count less, its memory notes more.
     pub weight: f32,
     pub len: f32,
+    /// `importance` of the frontmatter (1-5, 3 when absent); see `strength`.
+    pub importance: f32,
+    /// Distinct days the NPC recalled this note, and the last of them (days since 1970).
+    pub uses: u32,
+    pub last_used: Option<u64>,
 }
 
 pub struct Index {
     pub notes: Vec<Note>,
     pub out: Vec<Vec<usize>>,
     pub inn: Vec<Vec<usize>>,
+    /// Hebbian associations (see `associations`): notes recalled together often, used by recall like links.
+    pub assoc: Vec<Vec<usize>>,
     pub df: HashMap<String, u32>,
     pub avg_len: f32,
     pub built_ms: u64,
@@ -124,11 +131,12 @@ struct Front {
     tags: Vec<String>,
     aliases: Vec<String>,
     excluded: bool,
+    importance: f32,
 }
 
-/// The few frontmatter fields we use: `tags`, `aliases` (inline or list) and `claude: false`.
+/// The few frontmatter fields we use: `tags`, `aliases` (inline or list), `importance` and `claude: false`.
 fn parse_front(lines: &[&str]) -> Front {
-    let mut front = Front { tags: Vec::new(), aliases: Vec::new(), excluded: false };
+    let mut front = Front { tags: Vec::new(), aliases: Vec::new(), excluded: false, importance: super::strength::DEFAULT_IMPORTANCE };
     let mut key = String::new();
     for line in lines {
         if let Some(item) = line.trim_start().strip_prefix("- ").filter(|_| line.starts_with(' ') || line.starts_with('-')) {
@@ -145,6 +153,11 @@ fn parse_front(lines: &[&str]) -> Front {
         let value = value.trim();
         if key == "claude" && value.eq_ignore_ascii_case("false") {
             front.excluded = true;
+        }
+        if key == "importance" {
+            if let Ok(n) = value.parse::<f32>() {
+                front.importance = n.clamp(1.0, 5.0);
+            }
         }
         if value.is_empty() {
             continue;
@@ -197,10 +210,14 @@ fn scan_body(body: &str) -> (Vec<String>, Vec<String>) {
 }
 
 fn folder_weight(path: &str) -> f32 {
-    if path.starts_with(&format!("{BRAIN_DIR}/Sesiones/")) {
+    if path.starts_with(&format!("{BRAIN_DIR}/Archivo/")) {
+        0.0 // forgotten: kept as a note, never recalled
+    } else if path.starts_with(&format!("{BRAIN_DIR}/Sesiones/")) {
         0.7
     } else if path.starts_with(&format!("{BRAIN_DIR}/Memoria/")) {
         1.2
+    } else if path.starts_with(&format!("{BRAIN_DIR}/Hábitos/")) {
+        1.3
     } else {
         1.0
     }
@@ -246,6 +263,9 @@ pub fn parse_note(path: &str, content: &str, mtime_s: u64) -> Option<Note> {
         terms,
         weight: folder_weight(path),
         len,
+        importance: front.importance,
+        uses: 0,
+        last_used: None,
     })
 }
 
@@ -259,6 +279,7 @@ pub fn build(vault: &Path, exclude: &[String]) -> Index {
     collect_markdown(vault, &mut files);
     files.sort();
 
+    let usage = super::strength::load(vault);
     let mut notes = Vec::new();
     for path in files {
         let Ok(meta) = fs::metadata(&path) else { continue };
@@ -271,7 +292,11 @@ pub fn build(vault: &Path, exclude: &[String]) -> Index {
         }
         let Ok(content) = fs::read_to_string(&path) else { continue };
         let mtime = meta.modified().ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-        if let Some(note) = parse_note(&rel, &content, mtime) {
+        if let Some(mut note) = parse_note(&rel, &content, mtime) {
+            if let Some(used) = usage.get(&rel) {
+                note.uses = used.uses;
+                note.last_used = Some(used.last);
+            }
             notes.push(note);
         }
     }
@@ -305,7 +330,17 @@ pub fn build(vault: &Path, exclude: &[String]) -> Index {
         }
     }
     let avg_len = if notes.is_empty() { 1.0 } else { notes.iter().map(|n| n.len).sum::<f32>() / notes.len() as f32 };
-    Index { notes, out, inn, df, avg_len, built_ms: crate::hooks::now_ms() }
+    let by_path: HashMap<&str, usize> = notes.iter().enumerate().map(|(i, n)| (n.path.as_str(), i)).collect();
+    let mut assoc = vec![Vec::new(); notes.len()];
+    for (a, b) in super::associations::strong(vault) {
+        if let (Some(&i), Some(&j)) = (by_path.get(a.as_str()), by_path.get(b.as_str())) {
+            if i != j && !out[i].contains(&j) && !out[j].contains(&i) {
+                assoc[i].push(j);
+                assoc[j].push(i);
+            }
+        }
+    }
+    Index { notes, out, inn, assoc, df, avg_len, built_ms: crate::hooks::now_ms() }
 }
 
 #[cfg(test)]

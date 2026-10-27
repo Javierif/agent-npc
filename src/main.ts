@@ -17,7 +17,7 @@ const store: Store = {
   settings: {
     vaultPath: "", workDir: "", allowEdits: false, autoApprove: false, port: 47650, theme: "postie", mini: false,
     telegramToken: "", telegramChatId: "", remoteView: false, remoteToken: "", slackWebhook: "", feishuWebhook: "", language: "auto",
-    activity: 50, obsidianFavorites: [], brainEnabled: false, brainInjectSessions: false, brainReflect: false, brainPersona: false, brainExclude: [],
+    activity: 50, obsidianFavorites: [], brainEnabled: false, brainInjectSessions: false, brainReflect: false, brainPersona: false, brainForget: false, brainExclude: [],
   },
   pets: [],
   usage: null,
@@ -227,6 +227,9 @@ void on<{ lessons: number; decisions: number; todos: number; promoted?: number }
   ui.showBubble(t("🪞 Reflexioné sobre la sesión: {l} lecciones, {d} decisiones, {t} pendientes", { l: lessons, d: decisions, t: todos }) + forged, 6000);
 });
 
+void on<{ note: string; principles: number; habits: number }>("brain-dreamt", ({ principles, habits }) => {
+  ui.showBubble(t("😴 {p} principios y {h} hábitos nuevos", { p: principles, h: habits }), 6000);
+});
 void on<{ note: string; reflections: number }>("brain-weekly", ({ reflections }) => {
   ui.showBubble(t("📅 Escribí el resumen de la semana ({n} reflexiones)", { n: reflections }), 6000);
 });

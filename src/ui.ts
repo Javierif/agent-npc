@@ -1015,6 +1015,15 @@ export class Ui {
         await load(true);
       } catch (err) { this.say(errorText(err), 7000); }
     };
+    const dream = async () => {
+      this.say(t("😴 Consolidando lo aprendido…"), 4000);
+      try {
+        const out = await api.brainDream();
+        this.say(t("😴 {p} principios y {h} hábitos nuevos", { p: out.principles, h: out.habits }), 6000);
+        void this.openNote(out.note);
+        await load(true);
+      } catch (err) { this.say(errorText(err), 7000); }
+    };
     const maintenance = async () => {
       try { notices = await api.brainMaintenance(); error = ""; } catch (err) { error = errorText(err); }
       draw();
@@ -1075,7 +1084,7 @@ export class Ui {
       reflecting = false;
     };
 
-    const check = (label: string, hint: string, key: "brainEnabled" | "brainInjectSessions" | "brainReflect" | "brainPersona", disabled = false) =>
+    const check = (label: string, hint: string, key: "brainEnabled" | "brainInjectSessions" | "brainReflect" | "brainPersona" | "brainForget", disabled = false) =>
       h("label", { class: "check" },
         h("input", { type: "checkbox", checked: s()[key], disabled, onchange: (e: Event) => void this.save({ [key]: (e.target as HTMLInputElement).checked }).then(() => load()) }),
         h("span", {}, label, h("div", { class: "muted small" }, hint)));
@@ -1087,20 +1096,22 @@ export class Ui {
         check(t("También en tus sesiones de Claude Code"), t("Añade notas relevantes al contexto de cada mensaje que escribes en Claude Code. Esas notas se envían a Claude."), "brainInjectSessions", !s().brainEnabled),
         check(t("Reflexionar al terminar cada sesión"), t("Un agente pequeño (Haiku, con tu `claude`) lee el final de la conversación y anota lecciones, decisiones y pendientes en «Claude NPC/». Gasta algo de tu cuota y envía esa conversación a Claude."), "brainReflect", !s().brainEnabled),
         check(t("Forjar una personalidad"), t("Al reflexionar anota cómo te gusta trabajar. Lo que se repite en 2 sesiones pasa a «Claude NPC/Personalidad.md» y se añade a las tareas del NPC y, una vez por sesión, a Claude Code (si está activado arriba). Es un archivo que puedes editar."), "brainPersona", !s().brainEnabled),
+        check(t("Olvidar con el tiempo"), t("Lo que el NPC aprendió y no vuelve a usar se desvanece y, al cerrar una sesión, pasa a «Claude NPC/Archivo/» (no se borra nada). Cada vez que lo recuerda, dura más. Tus notas nunca se olvidan."), "brainForget", !s().brainEnabled),
         h("div", { class: "row" }, h("button", { class: "btn", disabled: !s().brainEnabled, onclick: () => void reflect() }, `🪞 ${t("Reflexionar ahora")}`)),
         persona && h("div", { class: "list" },
           h("div", { class: "row" },
             h("div", { class: "muted small grow" }, t("🎭 Personalidad")),
             h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote("Claude NPC/Personalidad.md") }, "↗")),
-          persona.traits.length + persona.about.length === 0
+          persona.traits.length + persona.about.length + persona.values.length === 0
             ? h("div", { class: "muted small" }, t("Todavía no ha aprendido nada. Se forja con las reflexiones."))
             : h("div", { class: "muted small" },
                 ...(persona.traits.length > 0 ? [h("div", {}, `${t("Rasgos")}: ${persona.traits.map((x) => clip(x, 70)).join(" · ")}`)] : []),
-                ...(persona.about.length > 0 ? [h("div", {}, `${t("Sobre ti")}: ${persona.about.map((x) => clip(x, 70)).join(" · ")}`)] : [])),
+                ...(persona.about.length > 0 ? [h("div", {}, `${t("Sobre ti")}: ${persona.about.map((x) => clip(x, 70)).join(" · ")}`)] : []),
+                ...(persona.values.length > 0 ? [h("div", {}, `${t("Valores")}: ${persona.values.map((x) => clip(x, 70)).join(" · ")}`)] : [])),
           persona.pending > 0 && h("div", { class: "muted small" }, t("{n} observaciones esperando a repetirse", { n: persona.pending }))),
         error && h("div", { class: "muted small" }, error),
         status && h("div", { class: "row" },
-          h("div", { class: "muted small grow" }, t("{notes} notas · {links} enlaces · {tags} etiquetas", { notes: status.notes, links: status.links, tags: status.tags })),
+          h("div", { class: "muted small grow" }, t("{notes} notas · {links} enlaces · {tags} etiquetas", { notes: status.notes, links: status.links, tags: status.tags }) + (status.archived > 0 ? ` · ${t("🗄️ {n} recuerdos archivados", { n: status.archived })}` : "")),
           h("button", { class: "btn", title: t("Reindexar"), onclick: () => void load(true) }, "↻")),
         h("div", { class: "row" },
           ask,
@@ -1122,6 +1133,7 @@ export class Ui {
         h("div", { class: "row" }, remember, h("button", { class: "btn", onclick: () => void save() }, t("Guardar"))),
         h("div", { class: "row wrap" },
           h("button", { class: "btn", disabled: !s().brainEnabled, title: t("Haiku repasa las reflexiones de los últimos 7 días"), onclick: () => void weekly() }, `📅 ${t("Resumen semanal")}`),
+          h("button", { class: "btn", disabled: !s().brainEnabled, title: t("Haiku junta tus lecciones en principios y hábitos"), onclick: () => void dream() }, `😴 ${t("Consolidar")}`),
           h("button", { class: "btn", onclick: () => void maintenance() }, `🧹 ${t("Mantenimiento")}`),
           h("button", { class: "btn", title: t("Consultas de Dataview sobre las notas del NPC"), onclick: () => void openPanel() }, `📊 ${t("Abrir panel")}`)),
         notices && h("div", { class: "list" },
