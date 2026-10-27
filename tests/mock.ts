@@ -34,6 +34,17 @@ mockIPC((cmd, args) => {
     ];
     case "brain_apply": return null;
     case "brain_reflect": return { note: "Claude NPC/Reflexiones/2026-10-27 Revisar el presupuesto (abcdef12).md", lessons: 2, decisions: 1, todos: 1, persona: 2, promoted: 1 };
+    case "brain_ask": return {
+      text: "El presupuesto de **Atlas** se fijó en 12.000 € [[Presupuesto]]. La entrega es en marzo [[Atlas]].",
+      sources: [{ title: "Presupuesto", path: "Ideas/Presupuesto.md" }, { title: "Atlas", path: "Atlas.md" }],
+    };
+    case "brain_weekly": return { note: "Claude NPC/Semanal/Semana 2026-10-26.md", reflections: 4 };
+    case "brain_maintenance": return [
+      { kind: "stuck", title: "Enviar el informe", path: "Claude NPC/Pendientes.md", days: 21, related: null },
+      { kind: "duplicate", title: "Comprobar siempre las cifras del total", path: "Claude NPC/Memoria/Comprobar siempre las cifras del total.md", days: null, related: "Comprobar siempre las cifras totales" },
+      { kind: "orphan", title: "Idea suelta", path: "Idea suelta.md", days: null, related: null },
+    ];
+    case "brain_panel": return "Claude NPC/Panel.md";
     case "brain_persona": return { traits: ["Prefiere respuestas cortas y con un toque de humor."], about: ["Trabaja sobre todo por las noches."], pending: 3 };
     case "brain_remember": return "Claude NPC/Memoria/Nota.md";
     case "obsidian_uri": return null;

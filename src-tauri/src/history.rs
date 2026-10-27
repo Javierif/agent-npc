@@ -178,7 +178,15 @@ pub fn recent(root: &Path, limit: usize) -> Vec<RecentSession> {
 #[tauri::command]
 pub async fn recent_sessions() -> Result<Vec<RecentSession>, String> {
     let root = platform::home_dir().ok_or("could not find your home folder")?.join(".claude").join("projects");
-    tauri::async_runtime::spawn_blocking(move || recent(&root, 20)).await.map_err(|e| e.to_string())
+    // The brain's own model runs (reflection, question, weekly review) are not conversations of the user's.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut list = recent(&root, 40);
+        list.retain(|s| !s.title.as_deref().is_some_and(crate::brain::is_internal));
+        list.truncate(20);
+        list
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 import {
   api, errorText,
-  type BrainHit, type BrainProposal, type BrainStatus, type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PersonaView, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
+  type BrainAnswer, type BrainHit, type BrainProposal, type BrainStatus, type MaintenanceNotice, type ObsidianAction, type ObsidianCommand, type ObsidianFavorite, type PermissionRequest, type PersonaView, type PetInfo, type Quota, type RecentSession, type Session, type Settings, type TaskUpdate, type Usage, type VaultTask,
 } from "./api";
 import { describeActivity } from "./activity";
 import { firstLine, renderMarkdown } from "./markdown";
@@ -975,6 +975,9 @@ export class Ui {
     let hits: BrainHit[] | null = null;
     let proposals: BrainProposal[] | null = null;
     let persona: PersonaView | null = null;
+    let answer: BrainAnswer | null = null;
+    let asking = false;
+    let notices: MaintenanceNotice[] | null = null;
     let error = "";
     const s = () => this.store.settings;
     const ask = h("input", { class: "field small", placeholder: t("Pregúntale al cerebro…") });
@@ -993,6 +996,36 @@ export class Ui {
       try { hits = await api.brainSearch(query); error = ""; } catch (err) { error = errorText(err); }
       draw();
     };
+    const askBrain = async () => {
+      const question = ask.value.trim();
+      if (!question || asking) return;
+      asking = true;
+      answer = null;
+      this.say(t("💬 Pensando la respuesta…"), 4000);
+      try { answer = await api.brainAsk(question); error = ""; } catch (err) { error = errorText(err); }
+      asking = false;
+      draw();
+    };
+    const weekly = async () => {
+      this.say(t("📅 Repasando la semana…"), 4000);
+      try {
+        const out = await api.brainWeekly();
+        this.say(t("📅 Escribí el resumen de la semana ({n} reflexiones)", { n: out.reflections }), 6000);
+        void this.openNote(out.note);
+        await load(true);
+      } catch (err) { this.say(errorText(err), 7000); }
+    };
+    const maintenance = async () => {
+      try { notices = await api.brainMaintenance(); error = ""; } catch (err) { error = errorText(err); }
+      draw();
+    };
+    const openPanel = async () => {
+      try { await this.openNote(await api.brainPanel()); } catch (err) { this.say(errorText(err), 6000); }
+    };
+    const noticeText = (n: MaintenanceNotice) =>
+      n.kind === "stuck" ? t("Lleva {n} días sin cerrarse", { n: n.days ?? 0 })
+        : n.kind === "duplicate" ? t("Se parece a «{title}»", { title: n.related ?? "" })
+        : t("Sin enlaces con otras notas");
     const save = async () => {
       const text = remember.value.trim();
       if (!text) return;
@@ -1069,7 +1102,14 @@ export class Ui {
         status && h("div", { class: "row" },
           h("div", { class: "muted small grow" }, t("{notes} notas · {links} enlaces · {tags} etiquetas", { notes: status.notes, links: status.links, tags: status.tags })),
           h("button", { class: "btn", title: t("Reindexar"), onclick: () => void load(true) }, "↻")),
-        h("div", { class: "row" }, ask, h("button", { class: "btn", onclick: () => void search() }, `🔍 ${t("Buscar")}`)),
+        h("div", { class: "row" },
+          ask,
+          h("button", { class: "btn", onclick: () => void search() }, `🔍 ${t("Buscar")}`),
+          h("button", { class: "btn", disabled: asking || !s().brainEnabled, title: t("Responde con tu `claude` usando tus notas y las cita"), onclick: () => void askBrain() }, `💬 ${t("Preguntar")}`)),
+        answer && h("div", { class: "list" },
+          h("div", { class: "sticky-body rich" }, renderMarkdown(answer.text)),
+          answer.sources.length > 0 && h("div", { class: "row wrap" },
+            ...answer.sources.map((src) => h("button", { class: "btn", title: src.path, onclick: () => void this.openNote(src.path) }, `↗ ${clip(src.title, 30)}`)))),
         hits && h("div", { class: "list" },
           ...hits.map((hit) =>
             h("div", { class: "item" },
@@ -1080,6 +1120,19 @@ export class Ui {
               h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote(hit.path) }, "↗"))),
           hits.length === 0 && h("div", { class: "muted" }, t("Sin resultados."))),
         h("div", { class: "row" }, remember, h("button", { class: "btn", onclick: () => void save() }, t("Guardar"))),
+        h("div", { class: "row wrap" },
+          h("button", { class: "btn", disabled: !s().brainEnabled, title: t("Haiku repasa las reflexiones de los últimos 7 días"), onclick: () => void weekly() }, `📅 ${t("Resumen semanal")}`),
+          h("button", { class: "btn", onclick: () => void maintenance() }, `🧹 ${t("Mantenimiento")}`),
+          h("button", { class: "btn", title: t("Consultas de Dataview sobre las notas del NPC"), onclick: () => void openPanel() }, `📊 ${t("Abrir panel")}`)),
+        notices && h("div", { class: "list" },
+          ...notices.map((n) =>
+            h("div", { class: "item" },
+              h("div", { class: "item-main" },
+                h("div", { class: "item-title" }, clip(n.title, 60)),
+                h("div", { class: "muted small" }, noticeText(n))),
+              h("button", { class: "btn", title: t("Abrir en Obsidian"), onclick: () => void this.openNote(n.path) }, "↗"))),
+          notices.length === 0 ? h("div", { class: "muted" }, t("Todo en orden."))
+            : h("div", { class: "muted small" }, t("Solo son avisos: no se cambia nada."))),
         h("div", { class: "row" },
           h("div", { class: "grow" }, t("✨ Propuestas para tus notas")),
           h("button", { class: "btn", onclick: () => void suggest() }, t("Buscar enlaces y etiquetas"))),

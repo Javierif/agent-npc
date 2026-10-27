@@ -70,6 +70,50 @@ fn parse_task(line: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// What a vault task asks for beyond its text: the notes it mentions with `[[ ]]` and, with
+/// `📁 <folder>` (or `📁 "a folder"`), where Claude should work. The folder marker is removed from `text`.
+#[derive(Debug, Default, PartialEq)]
+pub struct TaskContext {
+    pub text: String,
+    pub links: Vec<String>,
+    pub dir: Option<String>,
+}
+
+const MAX_TASK_LINKS: usize = 5;
+const DIR_MARK: &str = "📁";
+
+pub fn task_context(task: &str) -> TaskContext {
+    let mut links: Vec<String> = Vec::new();
+    let mut rest = task;
+    while let Some(start) = rest.find("[[") {
+        let Some(end) = rest[start + 2..].find("]]") else { break };
+        let target = rest[start + 2..start + 2 + end].split(['|', '#']).next().unwrap_or("").trim();
+        if !target.is_empty() && !target.contains(['\n', '\r']) && !links.iter().any(|l| l == target) && links.len() < MAX_TASK_LINKS {
+            links.push(target.to_string());
+        }
+        rest = &rest[start + 2 + end + 2..];
+    }
+    let mut text = task.to_string();
+    let mut dir = None;
+    if let Some(at) = task.find(DIR_MARK) {
+        let after = task[at + DIR_MARK.len()..].trim_start();
+        let (value, used) = match after.strip_prefix('"') {
+            Some(quoted) => match quoted.find('"') {
+                Some(close) => (quoted[..close].to_string(), close + 2),
+                None => (String::new(), after.len()),
+            },
+            None => {
+                let word = after.split_whitespace().next().unwrap_or("");
+                (word.to_string(), word.len())
+            }
+        };
+        let tail = &after[used.min(after.len())..];
+        text = format!("{} {}", task[..at].trim_end(), tail.trim_start()).trim().to_string();
+        dir = Some(value.trim().to_string()).filter(|d| !d.is_empty());
+    }
+    TaskContext { text, links, dir }
+}
+
 pub fn scan(vault: &Path) -> Vec<VaultTask> {
     let mut files = Vec::new();
     collect_markdown(vault, &mut files);
@@ -97,13 +141,18 @@ pub fn scan(vault: &Path) -> Vec<VaultTask> {
     tasks
 }
 
-pub(crate) fn civil_date() -> String {
-    // Days since 1970-01-01 -> proleptic Gregorian date (UTC).
+/// Days since 1970-01-01 (UTC) today.
+pub(crate) fn today_days() -> i64 {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let z = secs.div_euclid(86_400) + 719_468;
+    secs.div_euclid(86_400)
+}
+
+/// Days since 1970-01-01 -> `YYYY-MM-DD` (proleptic Gregorian, UTC).
+pub(crate) fn date_from_days(days: i64) -> String {
+    let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
     let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
@@ -113,6 +162,26 @@ pub(crate) fn civil_date() -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// `YYYY-MM-DD` (a longer text may follow) -> days since 1970-01-01.
+pub(crate) fn days_from_date(text: &str) -> Option<i64> {
+    let head = text.get(..10)?;
+    let mut parts = head.split('-');
+    let (y, m, d): (i64, i64, i64) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+pub(crate) fn civil_date() -> String {
+    date_from_days(today_days())
 }
 
 /// Current time of day as `HH:MM` (UTC, like `civil_date`).
@@ -359,6 +428,31 @@ mod tests {
         assert!(vaults_from_registry("not json").is_empty());
         let _ = fs::remove_dir_all(old);
         let _ = fs::remove_dir_all(new);
+    }
+
+    #[test]
+    fn task_context_reads_links_and_a_working_folder() {
+        let c = task_context("Resume [[Atlas]] y [[Plan|el plan]] 📁 C:\\Users\\yo\\proj por favor");
+        assert_eq!(c.links, vec!["Atlas".to_string(), "Plan".to_string()]);
+        assert_eq!(c.dir.as_deref(), Some("C:\\Users\\yo\\proj"));
+        assert_eq!(c.text, "Resume [[Atlas]] y [[Plan|el plan]] por favor");
+        let q = task_context("Revisa 📁 \"Mis cosas/App\" ya");
+        assert_eq!((q.dir.as_deref(), q.text.as_str()), (Some("Mis cosas/App"), "Revisa ya"));
+        assert_eq!(task_context("sin nada"), TaskContext { text: "sin nada".into(), ..Default::default() });
+        assert_eq!(task_context("solo 📁").dir, None);
+        assert_eq!(task_context("[[a]] [[a]] [[]]").links, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn dates_convert_both_ways() {
+        assert_eq!(date_from_days(0), "1970-01-01");
+        assert_eq!(days_from_date("2026-10-27 resto"), days_from_date("2026-10-27"));
+        assert_eq!(date_from_days(days_from_date("2026-10-27").unwrap()), "2026-10-27");
+        for d in [0, 365, 20_000, 20_754] {
+            assert_eq!(days_from_date(&date_from_days(d)), Some(d));
+        }
+        assert_eq!(days_from_date("2026-13-01"), None);
+        assert_eq!(days_from_date("hola"), None);
     }
 
     #[test]

@@ -3,11 +3,13 @@
 //! back under `Claude NPC/`. This file glues them to tasks, hooks and the UI.
 //! Everything is opt-in (`brainEnabled`) and local; with it off nothing here runs.
 
+pub mod ask;
 pub mod capture;
 pub mod index;
 pub mod persona;
 pub mod recall;
 pub mod reflect;
+pub mod review;
 pub mod suggest;
 
 use std::{
@@ -31,7 +33,7 @@ use crate::{
     vault,
 };
 use index::{Index, BRAIN_DIR};
-use recall::{brief, is_wrapped, recall, Hit};
+use recall::{brief, is_wrapped, recall, recall_in, Hit};
 
 /// An index older than this is rebuilt in the background on the next use.
 const FRESH: Duration = Duration::from_secs(60);
@@ -134,14 +136,26 @@ pub fn warm(shared: &Shared) {
     }
 }
 
+/// Name of the project a folder belongs to, as the NPC's notes call it.
+pub fn project_of(cwd: &str) -> String {
+    capture::project_name(cwd)
+}
+
+/// Whether a prompt is one of the brain's own model runs (reflection, question, weekly review):
+/// hooks ignore them, so they never show up as sessions, notes or notifications.
+pub fn is_internal(prompt: &str) -> bool {
+    [reflect::MARKER, ask::MARKER, review::MARKER].iter().any(|m| prompt.starts_with(m))
+}
+
 /// The memory block for `query` and the titles of the notes in it; `None` when nothing matches.
-fn prompt_brief(shared: &Shared, query: &str, wait: bool) -> Option<(String, Vec<String>)> {
+/// Notes of `project` (the folder the prompt comes from) rank higher.
+fn prompt_brief(shared: &Shared, query: &str, project: Option<&str>, wait: bool) -> Option<(String, Vec<String>)> {
     let query: String = recall::strip_brief(query).chars().take(QUERY_CHARS).collect();
     if query.trim().chars().count() < MIN_QUERY_CHARS {
         return None;
     }
     let index = index_for(shared, wait)?;
-    let hits = recall(&index, &query, BRIEF_HITS);
+    let hits = recall_in(&index, &query, BRIEF_HITS, project);
     let text = brief(&hits, BRIEF_CHARS)?;
     Some((text, hits.into_iter().map(|h| h.title).collect()))
 }
@@ -180,11 +194,11 @@ fn join_blocks(memory: Option<(String, Vec<String>)>, persona: Option<String>) -
 }
 
 /// The prompt of a task run from the NPC, led by what the vault remembers about it.
-pub fn task_prompt(app: &AppHandle, shared: &Shared, prompt: &str) -> String {
+pub fn task_prompt(app: &AppHandle, shared: &Shared, prompt: &str, project: Option<&str>) -> String {
     if !active(shared) {
         return prompt.to_string();
     }
-    match join_blocks(prompt_brief(shared, prompt, true), persona_block(shared)) {
+    match join_blocks(prompt_brief(shared, prompt, project, true), persona_block(shared)) {
         Some((text, titles)) => {
             if !titles.is_empty() {
                 announce(app, &titles, "task");
@@ -206,12 +220,13 @@ pub fn hook_context(app: &AppHandle, shared: &Shared, payload: &Value) -> Option
     let prompt = payload["prompt"].as_str()?;
     let sid = payload["session_id"].as_str().unwrap_or("");
     // Already carries memory (a task run from the NPC), is a slash command, or is a background run.
-    if is_wrapped(prompt) || prompt.starts_with(reflect::MARKER) || prompt.trim_start().starts_with('/') || shared.is_headless(sid) {
+    if is_wrapped(prompt) || is_internal(prompt) || prompt.trim_start().starts_with('/') || shared.is_headless(sid) {
         return None;
     }
     // The personality goes once per session; the memory block follows each prompt.
     let persona = persona_block(shared).filter(|_| first_persona(sid));
-    let (text, titles) = join_blocks(prompt_brief(shared, prompt, false), persona)?;
+    let project = payload["cwd"].as_str().filter(|c| !c.trim().is_empty()).map(project_of);
+    let (text, titles) = join_blocks(prompt_brief(shared, prompt, project.as_deref(), false), persona)?;
     if !titles.is_empty() {
         announce(app, &titles, "session");
     }
@@ -221,7 +236,7 @@ pub fn hook_context(app: &AppHandle, shared: &Shared, payload: &Value) -> Option
 /// A session reported progress or ended: write or refresh its note in the vault, and, when it
 /// `ended` with reflection on, let the small Haiku agent think over what was said.
 pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended: bool) {
-    let own_run = session.topic.as_deref().is_some_and(|t| t.starts_with(reflect::MARKER));
+    let own_run = session.topic.as_deref().is_some_and(is_internal);
     if !active(shared) || session.agent != "claude" || session.topic.is_none() || own_run || shared.is_headless(&session.id) {
         return;
     }
@@ -233,6 +248,7 @@ pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended
         if let Err(err) = capture::session_note(&vault, index.as_deref(), &session, &date, &hm) {
             eprintln!("claude-npc: could not write the session note: {err}");
         }
+        let _ = capture::ensure_panel(&vault);
         let (reflecting, persona) = {
             let s = shared.settings.lock().unwrap();
             (s.brain_reflect, s.brain_persona)
@@ -243,9 +259,34 @@ pub fn on_session(app: &AppHandle, shared: &Arc<Shared>, session: Session, ended
             if let Ok(outcome) = reflect::reflect(&vault, index_for(&shared, false).as_deref(), &subject, &date, persona) {
                 forget();
                 let _ = app.emit("brain-reflected", &outcome);
+                // The first reflection of a week with enough material also writes the weekly review.
+                if let Ok(week) = review::weekly(&vault, vault::today_days(), false) {
+                    forget();
+                    let _ = app.emit("brain-weekly", &week);
+                }
             }
         }
     });
+}
+
+/// With the memory on, writes the answer of a vault task as its own linked note and returns its name.
+pub fn task_result(shared: &Shared, task: &vault::VaultTask, answer: &str) -> Option<String> {
+    if !active(shared) {
+        return None;
+    }
+    let (vault, _) = config(shared)?;
+    let links = vault::task_context(&task.text).links;
+    let index = index_for(shared, false);
+    match capture::task_note(&vault, index.as_deref(), &task.file, &task.text, &links, answer, &vault::civil_date()) {
+        Ok(stem) => {
+            forget();
+            Some(stem)
+        }
+        Err(err) => {
+            eprintln!("claude-npc: could not write the task note: {err}");
+            None
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -369,7 +410,7 @@ pub async fn brain_reflect(session: Option<String>, state: State<'_, Arc<Shared>
             .iter()
             .find(|s| match &wanted {
                 Some(id) => &s.id == id,
-                None => !s.title.as_deref().unwrap_or("").starts_with(reflect::MARKER),
+                None => !is_internal(s.title.as_deref().unwrap_or("")),
             })
             .ok_or("no session found to reflect on")?;
         let subject = reflect::Subject { id: found.id.clone(), cwd: found.cwd.clone(), topic: found.title.clone().unwrap_or_default() };
@@ -388,6 +429,60 @@ pub async fn brain_persona(state: State<'_, Arc<Shared>>) -> Result<persona::Vie
     let shared = state.inner().clone();
     let vault = vault::vault_dir(&shared)?;
     tauri::async_runtime::spawn_blocking(move || persona::view(&vault)).await.map_err(|e| e.to_string())
+}
+
+/// "Pregúntale al cerebro": the user's own `claude` answers from the recalled notes, with citations.
+#[tauri::command]
+pub async fn brain_ask(question: String, state: State<'_, Arc<Shared>>) -> Result<ask::Answer, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    if !shared.settings.lock().unwrap().brain_enabled {
+        return Err("Turn the memory on first.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let index = index_for(&shared, true).ok_or("no vault configured")?;
+        ask::ask(&vault, &index, &question, None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// "Resumen semanal": Haiku reviews the week's reflections; `force` refreshes an existing review.
+#[tauri::command]
+pub async fn brain_weekly(force: Option<bool>, state: State<'_, Arc<Shared>>) -> Result<review::WeeklyOutcome, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    if !shared.settings.lock().unwrap().brain_enabled {
+        return Err("Turn the memory on first.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = review::weekly(&vault, vault::today_days(), force.unwrap_or(true))?;
+        forget();
+        Ok(outcome)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Stuck to-dos, near-duplicate lessons and orphan notes. Reads only.
+#[tauri::command]
+pub async fn brain_maintenance(state: State<'_, Arc<Shared>>) -> Result<Vec<review::Notice>, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let index = index_for(&shared, true).ok_or("no vault configured")?;
+        Ok(review::maintenance(&vault, &index, vault::today_days()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Makes sure `Claude NPC/Panel.md` exists and returns its path, to open it in Obsidian.
+#[tauri::command]
+pub async fn brain_panel(state: State<'_, Arc<Shared>>) -> Result<String, String> {
+    let shared = state.inner().clone();
+    let vault = vault::vault_dir(&shared)?;
+    tauri::async_runtime::spawn_blocking(move || capture::ensure_panel(&vault)).await.map_err(|e| e.to_string())?
 }
 
 /// Suggested links and tags for the user's own notes. Reads only; nothing is applied here.

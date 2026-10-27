@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::{
-    index::{Index, BRAIN_DIR},
+    index::{fold, Index, BRAIN_DIR},
     recall::recall,
 };
 use crate::{state::Session, vault::write_atomic};
@@ -213,6 +213,60 @@ pub fn remember(vault: &Path, index: Option<&Index>, text: &str, date: &str) -> 
     Ok(format!("{BRAIN_DIR}/Memoria/{name}.md"))
 }
 
+/// Keeps an answer from creating a `#claude` task by accident when it lands in a note.
+fn defuse_tag(text: &str) -> String {
+    text.replace("#claude", "claude").replace("#Claude", "Claude").replace("#CLAUDE", "CLAUDE")
+}
+
+/// Writes the answer to a `#claude` task as its own note, `Claude NPC/Tareas/<date> <task>.md`, linked to the
+/// note the task came from and to the notes it mentioned (when they exist). Returns the note's name for linking.
+pub fn task_note(vault: &Path, index: Option<&Index>, task_file: &str, task: &str, links: &[String], answer: &str, date: &str) -> Result<String, String> {
+    let slug = safe_name(&defuse_tag(task), MAX_NAME_CHARS);
+    let slug = if slug.is_empty() { "tarea".to_string() } else { slug };
+    let path = own_path(vault, "Tareas", &format!("{date} {slug}"))?;
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if path.exists() && !fs::read_to_string(&path).is_ok_and(|c| c.contains(AUTO_MARKER)) {
+        return Err("a note of yours already has that name".into());
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let origin = Path::new(task_file).file_stem().map(|s| safe_name(&s.to_string_lossy(), 120)).unwrap_or_default();
+    let known = |title: &str| index.is_some_and(|i| i.notes.iter().any(|n| fold(&n.title) == fold(title)));
+    let mut body = format!("---\ntype: task\ndate: {date}\ntags: [claude-task]\n---\n{AUTO_MARKER}\n# {slug}\n\n");
+    if !origin.is_empty() {
+        body.push_str(&format!("**Origen:** [[{origin}]]\n"));
+    }
+    body.push_str(&format!("**Tarea:** {}\n\n## Respuesta\n{}\n", defuse_tag(&task.split_whitespace().collect::<Vec<_>>().join(" ")), defuse_tag(answer.trim())));
+    let related: Vec<String> = links.iter().map(|l| safe_name(l, 120)).filter(|l| !l.is_empty() && known(l) && *l != origin).collect();
+    if !related.is_empty() {
+        body.push_str("\n## Relacionado\n");
+        for title in &related {
+            body.push_str(&format!("- [[{title}]]\n"));
+        }
+    }
+    write_atomic(&path, &body)?;
+    Ok(stem)
+}
+
+const PANEL: &str = "---\ntype: panel\nclaude: false\ntags: [claude-panel]\n---\n<!-- claude-npc:auto -->\n# Panel de Claude NPC\n\n\
+Este panel usa el plugin Dataview. Sin él, abre directamente las carpetas de «Claude NPC/». Si borras la marca de arriba, dejo de tocar esta nota.\n\n\
+## Pendientes\n```dataview\nTASK\nFROM \"Claude NPC\"\nWHERE file.name = \"Pendientes\" AND !completed\n```\n\n\
+## Últimas reflexiones\n```dataview\nTABLE project AS Proyecto, date AS Fecha\nFROM \"Claude NPC/Reflexiones\"\nSORT date DESC\nLIMIT 10\n```\n\n\
+## Lecciones y decisiones\n```dataview\nLIST\nFROM \"Claude NPC/Memoria\"\nWHERE type = \"lesson\" OR type = \"decision\"\nSORT date DESC\nLIMIT 15\n```\n\n\
+## Sesiones por proyecto\n```dataview\nTABLE WITHOUT ID project AS Proyecto, length(rows) AS Sesiones\nFROM \"Claude NPC/Sesiones\"\nGROUP BY project\n```\n\n\
+## Tareas resueltas\n```dataview\nLIST\nFROM \"Claude NPC/Tareas\"\nSORT date DESC\nLIMIT 10\n```\n\n\
+## Resúmenes semanales\n```dataview\nLIST\nFROM \"Claude NPC/Semanal\"\nSORT file.name DESC\nLIMIT 5\n```\n";
+
+/// Creates `Claude NPC/Panel.md` (Dataview queries over the NPC's notes) if it is missing and
+/// returns its path. An existing panel, edited or not, is never rewritten.
+pub fn ensure_panel(vault: &Path) -> Result<String, String> {
+    let path = own_path(vault, "", "Panel")?;
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !path.exists() {
+        write_atomic(&path, PANEL)?;
+    }
+    Ok(format!("{BRAIN_DIR}/Panel.md"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +327,43 @@ mod tests {
         assert!(diary.contains("09:30 UTC"));
         assert!(!vault.join("Claude NPC/Diario/2026-10-27.md").exists());
         assert_eq!(fs::read_dir(vault.join("Claude NPC/Sesiones")).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn a_task_answer_becomes_a_linked_note_that_cannot_start_new_tasks() {
+        let vault = temp_vault("task");
+        fs::write(vault.join("Atlas.md"), "Plan de la web").unwrap();
+        fs::write(vault.join("Ideas.md"), "- [ ] Resumir [[Atlas]] [[Inventada]] #claude").unwrap();
+        let idx = index::build(&vault, &[]);
+        let links = vec!["Atlas".to_string(), "Inventada".to_string(), "Ideas".to_string()];
+        let stem = task_note(&vault, Some(&idx), "Ideas.md", "Resumir [[Atlas]] #claude", &links, "- [ ] otra cosa #claude\nListo", "2026-10-27").unwrap();
+        assert_eq!(stem, "2026-10-27 Resumir Atlas claude");
+        let note = fs::read_to_string(vault.join("Claude NPC/Tareas").join(format!("{stem}.md"))).unwrap();
+        assert!(note.contains(AUTO_MARKER) && note.contains("**Origen:** [[Ideas]]") && note.contains("- [[Atlas]]"));
+        assert!(!note.contains("[[Inventada]]") && !note.contains("#claude"), "{note}");
+        // Running it again refreshes the same note; one the user took over is not touched.
+        task_note(&vault, Some(&idx), "Ideas.md", "Resumir [[Atlas]] #claude", &links, "otra respuesta", "2026-10-27").unwrap();
+        let path = vault.join("Claude NPC/Tareas").join(format!("{stem}.md"));
+        assert!(fs::read_to_string(&path).unwrap().contains("otra respuesta"));
+        fs::write(&path, "mío").unwrap();
+        assert!(task_note(&vault, Some(&idx), "Ideas.md", "Resumir [[Atlas]] #claude", &links, "x", "2026-10-27").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "mío");
+        let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn the_panel_is_created_once_and_never_indexed() {
+        let vault = temp_vault("panel");
+        assert_eq!(ensure_panel(&vault).unwrap(), "Claude NPC/Panel.md");
+        let path = vault.join("Claude NPC/Panel.md");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("```dataview") && text.contains("claude: false") && text.contains(AUTO_MARKER));
+        fs::write(&path, "editado").unwrap();
+        ensure_panel(&vault).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "editado");
+        fs::write(&path, text).unwrap();
+        assert!(index::build(&vault, &[]).notes.is_empty(), "claude: false keeps it out of the index");
         let _ = fs::remove_dir_all(&vault);
     }
 

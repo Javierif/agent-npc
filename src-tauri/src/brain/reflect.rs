@@ -132,10 +132,26 @@ pub(super) fn clean_text(text: &str, max: usize) -> String {
     flat.chars().take(max).collect()
 }
 
-/// Launches Haiku with read-only tools in the vault and returns what it printed.
-fn run_model(prompt: &str, vault: &Path) -> Result<String, String> {
-    let mut child = crate::runner::claude_command()
-        .args(["-p", "--model", "haiku", "--output-format", "text", "--allowedTools", "Read,Glob,Grep,LS"])
+/// Runs `work` unless another model run of the brain (reflection, weekly review) is going.
+pub(super) fn exclusive<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    if BUSY.swap(true, Ordering::SeqCst) {
+        return Err("another reflection is running".into());
+    }
+    let result = work();
+    BUSY.store(false, Ordering::SeqCst);
+    result
+}
+
+/// Launches `claude -p` with read-only tools in the vault (Haiku unless `model` says otherwise
+/// and `None` meaning the user's default) and returns what it printed.
+pub(super) fn run_model(prompt: &str, vault: &Path, model: Option<&str>) -> Result<String, String> {
+    let mut cmd = crate::runner::claude_command();
+    cmd.args(["-p"]);
+    if let Some(model) = model {
+        cmd.args(["--model", model]);
+    }
+    let mut child = cmd
+        .args(["--output-format", "text", "--allowedTools", "Read,Glob,Grep,LS"])
         .current_dir(vault)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -326,14 +342,11 @@ pub fn reflect(vault: &Path, index: Option<&Index>, subject: &Subject, date: &st
     if excerpt.user_turns < MIN_USER_TURNS || excerpt.text.chars().count() < MIN_EXCERPT_CHARS {
         return Err("the conversation is too short to reflect on".into());
     }
-    if BUSY.swap(true, Ordering::SeqCst) {
-        return Err("another reflection is running".into());
-    }
-    let result = (|| {
+    exclusive(|| {
         let query: String = excerpt.text.chars().take(800).collect();
         let memory = index.and_then(|i| brief(&recall(i, &query, 6), 1_500));
         let current = with_persona.then(|| persona::context(vault));
-        let reply = run_model(&build_prompt(subject, &excerpt.text, memory.as_deref(), current.as_deref()), vault)?;
+        let reply = run_model(&build_prompt(subject, &excerpt.text, memory.as_deref(), current.as_deref()), vault, Some("haiku"))?;
         let reflection = parse_reply(&reply)?;
         let mut outcome = write_reflection(vault, index, subject, &reflection, date)?;
         if with_persona {
@@ -342,9 +355,7 @@ pub fn reflect(vault: &Path, index: Option<&Index>, subject: &Subject, date: &st
             outcome.promoted = update.promoted;
         }
         Ok(outcome)
-    })();
-    BUSY.store(false, Ordering::SeqCst);
-    result
+    })
 }
 
 #[cfg(test)]

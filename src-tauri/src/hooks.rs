@@ -127,6 +127,20 @@ fn hook(app: &AppHandle, shared: &Arc<Shared>, payload: &Value) -> Value {
     }
     log_hook(shared, event, payload);
     let sid = payload["session_id"].as_str().unwrap_or("unknown");
+    // The brain's own model runs (reflection, question, weekly review) are not sessions of the user's:
+    // they never show up as sessions, children, notes or notifications.
+    if event == "UserPromptSubmit" && payload["prompt"].as_str().is_some_and(crate::brain::is_internal) {
+        shared.internal.lock().unwrap().insert(sid.to_string());
+        if shared.sessions.lock().unwrap().remove(sid).is_some() {
+            let _ = app.emit("sessions", snapshot(shared));
+        }
+    }
+    if shared.internal.lock().unwrap().contains(sid) {
+        if event == "SessionEnd" {
+            shared.internal.lock().unwrap().remove(sid);
+        }
+        return json!({});
+    }
     // The session leaves the map when it ends; the vault note still needs what it held.
     let ending = if event == "SessionEnd" { shared.sessions.lock().unwrap().get(sid).cloned() } else { None };
     update_session(app, shared, event, payload);

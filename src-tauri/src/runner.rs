@@ -81,6 +81,13 @@ fn resolve_dir(shared: &Shared, requested: Option<String>, vault: bool) -> Resul
         .ok_or_else(|| "no working directory available".to_string())
 }
 
+/// The folder a vault task asked for with `📁`: absolute, or relative to the vault; it must exist.
+fn task_dir(vault: &std::path::Path, requested: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(requested.trim());
+    let path = if path.is_absolute() { path } else { vault.join(path) };
+    path.is_dir().then_some(path)
+}
+
 #[tauri::command]
 pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) -> Result<u64, String> {
     let shared = state.inner().clone();
@@ -88,17 +95,26 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
     if prompt.is_empty() {
         return Err("empty task".into());
     }
-    let dir = resolve_dir(&shared, task.cwd.clone(), task.vault.is_some())?;
+    let mut dir = resolve_dir(&shared, task.cwd.clone(), task.vault.is_some())?;
     let (allow_edits, brain_vault) = {
         let settings = shared.settings.lock().unwrap();
         let vault = settings.vault_path.trim().to_string();
         (settings.allow_edits, (settings.brain_enabled && !vault.is_empty()).then_some(vault))
     };
+    // A vault task can say where to work (`📁 folder`) and which notes to read first (`[[Note]]`).
+    let context = task.vault.as_ref().map(|t| vault::task_context(&t.text));
+    let mut vault_for_notes = brain_vault.clone();
+    let mut moved = false;
+    if let Some(folder) = context.as_ref().and_then(|c| c.dir.as_deref()).and_then(|d| task_dir(&dir, d)) {
+        vault_for_notes.get_or_insert_with(|| dir.to_string_lossy().to_string());
+        dir = folder;
+        moved = true;
+    }
 
     let mut cmd = claude_command();
     cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--allowedTools", SAFE_TOOLS]);
     // The memory block names notes by path: let Claude read them even when the task runs elsewhere.
-    if let Some(vault) = &brain_vault {
+    if let Some(vault) = &vault_for_notes {
         if PathBuf::from(vault) != dir && PathBuf::from(vault).is_dir() {
             cmd.args(["--add-dir", vault.as_str()]);
         }
@@ -134,19 +150,32 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
     );
 
     // The prompt goes through stdin so quoting never matters.
-    let full_prompt = match &task.vault {
-        Some(t) => format!(
-            "This task comes from my Obsidian note \"{}\" (the current directory is the vault). \
-             Do it and reply with the answer only, in Markdown, concise.\n\nTask: {}",
-            t.file, t.text
-        ),
-        None => prompt,
+    let full_prompt = match (&task.vault, &context) {
+        (Some(t), Some(c)) => {
+            let place = if moved {
+                "the current directory is the folder the task asked for; the vault is added as an extra directory"
+            } else {
+                "the current directory is the vault"
+            };
+            let reading = if c.links.is_empty() {
+                String::new()
+            } else {
+                format!(" It mentions these notes; read them first (find them by name with Glob if needed): {}.", c.links.join(", "))
+            };
+            format!(
+                "This task comes from my Obsidian note \"{}\" ({place}).{reading} \
+                 Do it and reply with the answer only, in Markdown, concise.\n\nTask: {}",
+                t.file, c.text
+            )
+        }
+        _ => prompt,
     };
     let memory_app = app.clone();
     let memory_shared = shared.clone();
+    let project = crate::brain::project_of(&dir.to_string_lossy());
     thread::spawn(move || {
         // Looking up memory may build the index, so it happens here and not before `claude` starts.
-        let full_prompt = crate::brain::task_prompt(&memory_app, &memory_shared, &full_prompt);
+        let full_prompt = crate::brain::task_prompt(&memory_app, &memory_shared, &full_prompt, Some(&project));
         let _ = stdin.write_all(full_prompt.as_bytes());
     });
 
@@ -200,7 +229,12 @@ pub fn start_task(app: AppHandle, state: State<Arc<Shared>>, task: StartTask) ->
         let mut note = None;
         if ok {
             if let Some(task) = &vault_ref {
-                note = Some(match vault::complete_for_settings(&shared, task, &text) {
+                // With the memory on, the answer also gets its own linked note; the task quotes a link to it.
+                let answer = match crate::brain::task_result(&shared, task, &text) {
+                    Some(stem) => format!("{text}\n\n→ [[{stem}]]"),
+                    None => text.clone(),
+                };
+                note = Some(match vault::complete_for_settings(&shared, task, &answer) {
                     Ok(()) => "Written back to your note".to_string(),
                     Err(err) => format!("Could not update the note: {err}"),
                 });

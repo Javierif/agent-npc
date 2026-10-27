@@ -43,6 +43,29 @@ export interface ReflectOutcome {
   promoted: number;
 }
 
+/** An answer from "Pregúntale al cerebro", with the notes it cites. */
+export interface BrainAnswer {
+  text: string;
+  sources: Array<{ title: string; path: string }>;
+}
+
+/** What a weekly review wrote. */
+export interface WeeklyOutcome {
+  note: string;
+  reflections: number;
+}
+
+/** Something to look at in the vault; the NPC never changes anything for these. */
+export interface MaintenanceNotice {
+  kind: "stuck" | "duplicate" | "orphan";
+  title: string;
+  path: string;
+  /** `stuck`: days the to-do has been open. */
+  days: number | null;
+  /** `duplicate`: the note it looks like. */
+  related: string | null;
+}
+
 /** The personality note (`Claude NPC/Personalidad.md`) as the UI shows it. */
 export interface PersonaView {
   traits: string[];
@@ -235,6 +258,10 @@ export const api = {
   brainRemember: (text: string) => invoke<string>("brain_remember", { text }),
   brainReflect: (session?: string) => invoke<ReflectOutcome>("brain_reflect", { session: session ?? null }),
   brainPersona: () => invoke<PersonaView>("brain_persona"),
+  brainAsk: (question: string) => invoke<BrainAnswer>("brain_ask", { question }),
+  brainWeekly: (force = true) => invoke<WeeklyOutcome>("brain_weekly", { force }),
+  brainMaintenance: () => invoke<MaintenanceNotice[]>("brain_maintenance"),
+  brainPanel: () => invoke<string>("brain_panel"),
   brainSuggestions: () => invoke<BrainProposal[]>("brain_suggestions"),
   brainApply: (proposal: BrainProposal) => invoke("brain_apply", { proposal }),
   obsidianRunCommand: (id: string) => invoke("obsidian_run_command", { id }),

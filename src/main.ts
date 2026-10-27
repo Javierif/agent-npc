@@ -227,6 +227,10 @@ void on<{ lessons: number; decisions: number; todos: number; promoted?: number }
   ui.showBubble(t("🪞 Reflexioné sobre la sesión: {l} lecciones, {d} decisiones, {t} pendientes", { l: lessons, d: decisions, t: todos }) + forged, 6000);
 });
 
+void on<{ note: string; reflections: number }>("brain-weekly", ({ reflections }) => {
+  ui.showBubble(t("📅 Escribí el resumen de la semana ({n} reflexiones)", { n: reflections }), 6000);
+});
+
 let announcedVaultTasks = -1;
 void on<VaultTask[]>("vault-tasks", (tasks) => {
   store.vaultTasks = tasks;

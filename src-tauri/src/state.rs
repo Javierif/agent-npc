@@ -124,6 +124,8 @@ pub struct Shared {
     pub tasks: Mutex<HashMap<u64, Child>>,
     /// Sessions a headless `claude -p --resume` run is working in: the `SessionEnd` of that run is not the user's.
     pub headless: Mutex<HashMap<String, Headless>>,
+    /// Sessions that are the brain's own model runs (reflection, question, weekly review): their hook events are ignored.
+    pub internal: Mutex<std::collections::HashSet<String>>,
     /// The latest hook events received (names only, no prompts), newest last: lets the user see what a client sends.
     pub hook_log: Mutex<VecDeque<HookLogEntry>>,
     pub next_id: AtomicU64,
@@ -187,6 +189,7 @@ impl Shared {
             answers: Mutex::default(),
             tasks: Mutex::default(),
             headless: Mutex::default(),
+            internal: Mutex::default(),
             hook_log: Mutex::default(),
             next_id: AtomicU64::new(1),
             usage: Mutex::new(None),
