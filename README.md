@@ -1,7 +1,5 @@
 <div align="center">
 
-<!-- TODO: add the logo at docs/media/logo.png -->
-<img src="docs/media/logo.png" alt="claude-npc logo" width="120">
 
 # claude-npc
 
@@ -83,32 +81,3 @@ Without the hooks the NPC is still useful for launching tasks. More in [Integrat
 
 **MVP.** Tested on Windows 11; macOS and Linux are written but neither compiled nor tested. Much of the Obsidian, memory and integration work has only been checked with unit tests and simulations, not against real services. [docs/testing.md](docs/testing.md) says exactly what was and was not verified.
 
-## Compared to clawd-on-desk
-
-[clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk) was a conceptual inspiration; no code or art was copied (it is AGPL-3.0).
-
-| clawd-on-desk feature | Here |
-|---|---|
-| Animated states by agent | ✅ Claude Code; bridges for Gemini, Cursor and Codex; generic endpoint |
-| Permission bubbles + global shortcut | ✅ |
-| Approve from Telegram | ✅ |
-| Slack / Feishu notices | ✅ notices only (Feishu without interactive approval) |
-| Sessions panel + jump to the terminal | ✅ by folder name; if it cannot find it, it opens one that resumes the session |
-| Quota rings | ✅ requires configuring the `statusLine` |
-| Mobile view | ✅ read-only, PWA |
-| Mini mode | ✅ right edge |
-| Eye tracking, sleeping, click reaction | ✅ |
-| Themes | ✅ 4 palettes, custom themes, installable by URL and Codex Pets import (tested with a synthetic one). No official catalog or Live2D |
-| 25+ agents with their own integration | ◐ Claude Code, Gemini, Cursor and Codex; the rest through the generic endpoint |
-| macOS / Linux | ◐ code written, untested |
-| WSL / remote SSH | ◐ copy the hooks + `ssh -R` tunnel or WSL2 *mirrored*; untested |
-| Several languages | ✅ 5 languages |
-| **Send tasks to Claude** | ✅ (clawd-on-desk does not do this) |
-| **Obsidian** | ✅ (clawd-on-desk does not have it) |
-| **Memory from the vault** | ◐ optional; reflection and personality tried by hand by the author with a real vault and a real `claude`, with no formal check; the rest untested with a real Obsidian or Claude Code (clawd-on-desk does not have it) |
-
-## Licenses
-
-MIT. Third-party attributions are in `NOTICE`. The character is original.
-
-Documentation and code comments are in English. UI labels shown in Spanish are the dictionary keys in `src/i18n.ts`, so the docs keep them verbatim in *italics*, with an English gloss on first use.
