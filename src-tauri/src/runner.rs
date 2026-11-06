@@ -32,7 +32,27 @@ pub struct StartTask {
     pub resume: Option<String>,
 }
 
+/// On Windows, `Command::new("claude")` only finds `claude.exe`; an npm install ships
+/// `claude.cmd` instead, so look for either on PATH (the `.exe` wins).
+#[cfg(windows)]
+fn find_claude_windows() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    for name in ["claude.exe", "claude.cmd"] {
+        if let Some(found) = dirs.iter().map(|d| d.join(name)).find(|p| p.is_file()) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub(crate) fn claude_command() -> Command {
+    #[cfg(windows)]
+    let mut cmd = match find_claude_windows() {
+        Some(path) => Command::new(path),
+        None => Command::new("claude"),
+    };
+    #[cfg(not(windows))]
     let mut cmd = Command::new("claude");
     #[cfg(windows)]
     {
