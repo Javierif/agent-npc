@@ -26,3 +26,4 @@ dist-ssr
 # Claude Code (local)
 .claude/.doc-review-ok
 .claude/settings.local.json
+site-dist

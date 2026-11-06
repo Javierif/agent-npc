@@ -35,8 +35,8 @@ try {
 if (reviewed === head) process.exit(0);
 
 console.error(
-  "Push bloqueado: la documentación no se ha revisado para este commit. " +
-    "Invoca primero al agente `doc-keeper` (Agent con subagent_type \"doc-keeper\") para revisar CLAUDE.md/README/MVP; " +
-    "si cambia documentación, commitéala y vuelve a invocarlo. Después repite el push."
+  "Push blocked: the documentation has not been reviewed for this commit. " +
+    "First invoke the `doc-keeper` agent (Agent with subagent_type \"doc-keeper\") to review CLAUDE.md/README/MVP; " +
+    "if it changes documentation, commit it and invoke it again. Then repeat the push."
 );
 process.exit(2);

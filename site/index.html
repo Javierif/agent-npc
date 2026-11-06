@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>claude-npc · a desktop NPC for Claude Code</title>
+  <meta name="description" content="A tiny desktop character that reacts to what Claude Code does, asks you for permissions and lets you send it tasks.">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="hero">
+    <img class="hero-gif" src="./hero.gif" alt="Don Rana, Don Pato, Don Hámster and Postie reacting to Claude asking for a scary permission" width="640">
+    <h1>claude-npc</h1>
+    <p class="pitch">A desktop NPC for Claude Code that reacts to what Claude does, asks you for permissions and lets you send it tasks.</p>
+    <p class="cta">
+      <a class="btn" href="https://github.com/Javierif/agent-npc/releases">⬇ Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/Javierif/agent-npc">GitHub</a>
+    </p>
+    <p class="badges">MIT · Windows 11 · MVP · UI in es / en / pt / fr / de</p>
+  </header>
+
+  <main>
+    <section class="features">
+      <article><h3>Reacts to Claude Code</h3><p>Thinking, working, juggling subagents, alert when it needs you, happy when done, sad when something fails.</p></article>
+      <article><h3>Approve permissions</h3><p>A card with Allow / Deny, global shortcuts, or approve from Telegram.</p></article>
+      <article><h3>Send it tasks</h3><p>Runs <code>claude -p</code> with your own session. Read-only unless you allow edits.</p></article>
+      <article><h3>Obsidian, no plugin</h3><p>Write <code>- [ ] something #claude</code> and press ▶. The answer lands under the task.</p></article>
+      <article><h3>Quota rings</h3><p>Your 5 h / 7 d usage and the context window at a glance.</p></article>
+      <article><h3>Local first</h3><p>No backend, no telemetry, no accounts. Your <code>claude</code>, your subscription.</p></article>
+    </section>
+
+    <section>
+      <h2>Meet the characters</h2>
+      <p class="sub">Drawn from code, one base, every pose derived. Click a character to change what it is doing.</p>
+      <div id="gallery" class="gallery"></div>
+    </section>
+
+    <section class="steps">
+      <h2>Quick start</h2>
+      <ol>
+        <li>Run it and hover the character for the menu.</li>
+        <li>Press <em>Conectar con Claude Code</em> (Connect to Claude Code) in Sessions or Settings.</li>
+        <li>Restart your open Claude Code sessions.</li>
+      </ol>
+      <details>
+        <summary>Run from source</summary>
+        <pre>npm install
+npm run tauri dev</pre>
+        <p>Needs Node 20+, Rust, WebView2 and a signed-in <code>claude</code>.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <p>MVP, tested on Windows 11 only; see <a href="https://github.com/Javierif/agent-npc/blob/main/docs/testing.md">what has been verified</a>. MIT licensed, the characters are original.</p>
+  </footer>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
