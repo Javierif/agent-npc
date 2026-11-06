@@ -109,6 +109,6 @@ Without the hooks the NPC is still useful for launching tasks. More in [Integrat
 
 ## Licenses
 
-MIT. `src/physics.ts` is adapted from [just-simple-npc](https://github.com/DavidHurtadoAI/just-simple-npc) (MIT, © 2026 David Hurtado); see `NOTICE`. The character is original.
+MIT. Third-party attributions are in `NOTICE`. The character is original.
 
 Documentation and code comments are in English. UI labels shown in Spanish are the dictionary keys in `src/i18n.ts`, so the docs keep them verbatim in *italics*, with an English gloss on first use.
