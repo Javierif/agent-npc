@@ -23,6 +23,8 @@ const CHOICES: Array<[Action, number, "lively" | "calm" | "sleepy"]> = [
   ["sneeze", 1, "lively"], ["shake", 1, "lively"], ["fly", 1, "lively"], ["croak", 1, "lively"],
   ["quip", 2, "calm"],
 ];
+/** Lines that answer something the user does to the character; they stay even when it is keeping quiet. */
+const REACTIONS = new Set<PhraseKind>(["pet", "angry", "slap", "startle", "cover", "thrown", "bump", "bigbump"]);
 const BODY_ROWS = 15; // sprite rows that belong to the body; the rows above are effects
 const DRAG_THRESHOLD = 5;
 const SPEED = 38;
@@ -117,6 +119,7 @@ export class Npc {
   private mini = false;
   /** 0 (sleepy) to 1 (hyperactive); 0.5 is the original behaviour. */
   private activity = 0.5;
+  private quiet = false;
   private pet: PetSheet | null = null;
   private reactLeft = 0;
 
@@ -276,6 +279,7 @@ export class Npc {
 
   /** Says a random line for the situation. Chatter is rationed unless `force`d, so it never turns into spam. */
   private say(kind: PhraseKind, chance = 1, force = false) {
+    if (this.quiet && !REACTIONS.has(kind)) return;
     if (Math.random() > chance || (!force && this.sayLeft > 0)) return;
     this.sayLeft = 2;
     this.onSay(phrase(kind));
@@ -411,7 +415,7 @@ export class Npc {
 
   private choose(): Action {
     // The nap at the desk comes sooner when calm and almost never when hyper.
-    if (this.idleFor > 20 + 80 * this.activity && Math.random() < 0.5) {
+    if (!this.quiet && this.idleFor > 20 + 80 * this.activity && Math.random() < 0.5) {
       this.idleFor = 0;
       return "nod";
     }
@@ -437,7 +441,19 @@ export class Npc {
     return "quip";
   }
 
+  /**
+   * While a child is working it must not be upstaged, nor should the leader sit over the terminal
+   * output: no wandering, no gags and no spontaneous chatter, only standing around quietly.
+   */
+  setQuiet(quiet: boolean) {
+    if (quiet === this.quiet) return;
+    this.quiet = quiet;
+    // A walk already under way stops at the next tick instead of crossing the output.
+    if (quiet && this.action === "walk") this.actionLeft = 0;
+  }
+
   private allowed(action: Action): boolean {
+    if (this.quiet) return action === "idle" || action === "look" || action === "sit";
     switch (action) {
       case "chase": return this.lookAt !== null;
       case "fly": return !this.pet;

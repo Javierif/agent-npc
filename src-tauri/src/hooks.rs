@@ -47,6 +47,22 @@ fn truncate(text: &str, max: usize) -> String {
     out
 }
 
+/// Claude Code injects a subagent's final report as a user prompt wrapped in
+/// `<agent-message from="…">` with a "[Subagent hand-back]" preamble. Returns the report
+/// without that envelope, or `None` when the prompt is not such a message.
+fn unwrap_agent_message(prompt: &str) -> Option<String> {
+    let rest = prompt.trim_start().strip_prefix("<agent-message")?;
+    let rest = &rest[rest.find('>')? + 1..];
+    let rest = rest.trim();
+    let rest = rest.strip_suffix("</agent-message>").unwrap_or(rest).trim();
+    // The preamble is one paragraph; the report follows the first blank line.
+    let body = match rest.strip_prefix("[Subagent hand-back]") {
+        Some(after) => after.split_once("\n\n").map_or(after, |(_, report)| report),
+        None => rest,
+    };
+    Some(body.trim().to_string())
+}
+
 /// One-line description of what a tool call is about to do.
 pub fn summarize_input(tool: &str, input: &Value) -> String {
     let pick = |keys: &[&str]| {
@@ -339,8 +355,11 @@ fn update_session(app: &AppHandle, shared: &Arc<Shared>, event: &str, payload: &
                     session.detail = None;
                     // A task the NPC started carries a memory block before the request; the topic is the request.
                     let prompt = payload["prompt"].as_str().map(crate::brain::recall::strip_brief);
+                    // A subagent's hand-back is not something the user asked: show its report, but never as the topic.
+                    let handback = prompt.and_then(unwrap_agent_message);
+                    let prompt = handback.as_deref().or(prompt);
                     if let Some(prompt) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
-                        if session.topic.is_none() {
+                        if session.topic.is_none() && handback.is_none() {
                             session.topic = Some(truncate(prompt, 140));
                         }
                         session.prompt = Some(truncate(prompt, 600));
@@ -614,6 +633,14 @@ pub fn uninstall_hooks() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unwraps_subagent_handbacks() {
+        let raw = "<agent-message from=\"a214\">\n[Subagent hand-back] The text below is the final report.\n\nCommit hecho.\n</agent-message>";
+        assert_eq!(unwrap_agent_message(raw).as_deref(), Some("Commit hecho."));
+        assert_eq!(unwrap_agent_message("<agent-message from=\"x\">hola</agent-message>").as_deref(), Some("hola"));
+        assert_eq!(unwrap_agent_message("arregla el bug"), None);
+    }
 
     #[test]
     fn merge_keeps_foreign_hooks_and_is_idempotent() {
