@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "site": "vite --config vite.site.config.ts --port 1430",
+    "site:build": "vite build --config vite.site.config.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
