@@ -1,8 +1,6 @@
 # MVP definition
 
-Original goal: "an MVP with a mascot that moves around the screen, with physics, with all the features of clawd-on-desk and with an Obsidian connection".
-
-"All the features of clawd-on-desk" has no verifiable end (its per-agent and per-platform integrations keep growing), so the MVP is bounded to this closed list. Each item says how it was checked.
+The MVP is a mascot that moves around the screen with physics, reacts to Claude Code and connects to Obsidian. It is bounded to this closed list; each item says how it was checked.
 
 UI labels that the app shows in Spanish (the keys of `DICT` in `src/i18n.ts`) are kept verbatim, in italics, with an English gloss on first use.
 
@@ -11,7 +9,7 @@ UI labels that the app shows in Spanish (the keys of `DICT` in `src/i18n.ts`) ar
 | # | Feature | Checked with |
 |---|---|---|
 | 1 | Mascot that walks, sits, sleeps and waves above the taskbar | Real Windows app (webview inspected) |
-| 2 | Physics: drag, drop and fall with gravity | just-simple-npc physics + real app |
+| 2 | Physics: drag, drop and fall with gravity | Real app |
 | 3 | Transparent overlay with click-through everywhere except over the character and its panels | Real app: the window switches from transparent to interactive when the cursor is over it |
 | 4 | Reacts to Claude Code state (thinking, working, subagents, alert, success, error) | Real hook events against the app; test of every animation row with a synthetic pet |
 | 5 | Allow/Deny permission cards, global shortcuts and Telegram | Hook → card → HTTP response flow in the real app; Telegram against a simulated bot; shortcut logic with tests |
@@ -36,7 +34,7 @@ UI labels that the app shows in Spanish (the keys of `DICT` in `src/i18n.ts`) ar
 
 ## Out of the MVP (decided, not forgotten)
 
-- Native integrations with the remaining 25+ clawd-on-desk agents (they can be added with `/agent` or a bridge).
+- Native integrations with more agents (they can be added with `/agent` or a bridge).
 - Official theme catalog and Live2D.
 - WSL and remote SSH as tested features (there is a button that copies the hooks and the recipe is in docs/integrations.md).
 - macOS and Linux (the code is written but neither compiled nor tested).

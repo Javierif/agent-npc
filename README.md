@@ -15,7 +15,7 @@ English · UI in Español, English, Português, Français, Deutsch
 
 <img src="docs/media/hero.gif" alt="Don Rana, Don Pato, Don Hámster and Postie reacting to Claude asking for a scary permission" width="720">
 
-### [⬇ Download for Windows](https://github.com/Javierif/agent-npc/releases) <!-- TODO: link to the real installer once published -->
+### [⬇ Download for Windows](https://github.com/Javierif/agent-npc/releases)
 
 </div>
 
@@ -35,7 +35,7 @@ It is **local first**: no backend, no telemetry, no accounts. It uses your own `
 
 ## Install
 
-**Easiest:** download the installer from [Releases](https://github.com/Javierif/agent-npc/releases) <!-- TODO: not published yet -->.
+**Easiest:** download the installer from [Releases](https://github.com/Javierif/agent-npc/releases).
 
 <details>
 <summary>Or run it from source</summary>
