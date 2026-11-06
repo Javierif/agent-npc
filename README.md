@@ -61,7 +61,6 @@ Without the hooks the NPC is still useful for launching tasks. More in [Integrat
 
 ## Characters
 
-<!-- TODO: add a gallery image at docs/media/characters.png -->
 <p align="center">
   <img src="docs/media/characters.png" alt="Postie, Don Rana, Don Pato and Don Hámster" width="640"><br>
   <sub>Postie · Don Rana · Don Pato · Don Hámster</sub>
