@@ -42,11 +42,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-// Hero: Postie walking.
-const heroFrames = frames("postie", 12);
-const hero = document.getElementById("hero") as HTMLCanvasElement;
-player(hero, () => heroFrames.get("walking")!, 280);
-
 // Gallery: the four characters; click to cycle their state.
 const CHARACTERS: Array<[string, string]> = [
   ["postie", "Postie"], ["rana", "Don Rana"], ["pato", "Don Pato"], ["hamster", "Don Hámster"],

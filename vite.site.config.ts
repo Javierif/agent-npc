@@ -4,5 +4,6 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: "site",
   base: "./",
+  publicDir: "../docs/media",
   build: { outDir: "../site-dist", emptyOutDir: true },
 });

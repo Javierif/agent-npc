@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project guide for Claude Code. For a short overview see [README.md](README.md); the detailed user documentation lives in `docs/` (`features.md`, `obsidian.md`, `cerebro.md`, `integrations.md` (Telegram, Slack/Feishu, bridges, quota, mobile view, WSL/SSH), `themes.md`, `security.md`, `testing.md` (tests and what has been verified)); for the MVP scope, [MVP.md](MVP.md).
+Project guide for Claude Code. For a short overview see [README.md](README.md); the detailed user documentation lives in `docs/` (`features.md`, `obsidian.md`, `cerebro.md`, `integrations.md` (Telegram, Slack/Feishu, bridges, quota, mobile view, WSL/SSH), `themes.md`, `security.md`, `testing.md` (tests and what has been verified)); for the MVP scope, [MVP.md](MVP.md). `site/` is the static landing page (`npm run site`, `npm run site:build`, deployed by `.github/workflows/pages.yml`); `site/hero-gif.ts` + `site/receive-gif.mjs` regenerate `docs/media/hero.gif` from the real sprites.
 
 ## What it is
 

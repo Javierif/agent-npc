@@ -15,8 +15,7 @@
 
 English · UI in Español, English, Português, Français, Deutsch
 
-<!-- TODO: record a 5-10 s GIF (under 5 MB) and save it as docs/media/hero.gif -->
-<img src="docs/media/hero.gif" alt="Postie walking on the taskbar and asking for a permission" width="720">
+<img src="docs/media/hero.gif" alt="Don Rana, Don Pato, Don Hámster and Postie reacting to Claude asking for a scary permission" width="720">
 
 ### [⬇ Download for Windows](https://github.com/Javierif/agent-npc/releases) <!-- TODO: link to the real installer once published -->
 
