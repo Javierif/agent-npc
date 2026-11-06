@@ -1,7 +1,7 @@
 <div align="center">
 
 
-# claude-npc
+# agent-npc
 
 **A desktop NPC for Claude Code that reacts to what Claude does, asks you for permissions and lets you send it tasks.**
 
