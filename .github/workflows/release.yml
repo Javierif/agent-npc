@@ -1,0 +1,32 @@
+name: Release
+# Builds the Windows installer when a version tag (v*) is pushed and attaches it to a
+# DRAFT GitHub Release: review it and press Publish. Windows only: macOS and Linux are untested.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "claude-npc ${{ github.ref_name }}"
+          releaseBody: "MVP, tested on Windows 11 only. See docs/testing.md for what has been verified."
+          releaseDraft: true
+          prerelease: true
