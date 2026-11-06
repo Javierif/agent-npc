@@ -1,6 +1,5 @@
-// Behaviour loop for the character. The weighted random choice, wandering and
-// drag-and-fall follow the approach of just-simple-npc (MIT, see NOTICE); the
-// reactions to Claude's state are our own.
+// Behaviour loop for the character: weighted random choice, wandering, drag-and-fall
+// and the reactions to Claude's state.
 
 import { api } from "./api";
 import { isResting, severity, stepBody, throwVelocity, type Body } from "./physics";

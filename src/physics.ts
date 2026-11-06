@@ -1,4 +1,4 @@
-// Ported from just-simple-npc (MIT, (c) 2026 David Hurtado). See NOTICE.
+// Minimal 2D rigid-body step.
 // The fall was extended into a small 2D rigid-body step: thrown characters keep
 // their momentum, bounce off the floor and walls, and report how hard they hit.
 
