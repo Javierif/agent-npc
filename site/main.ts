@@ -67,13 +67,3 @@ for (const [id, label] of CHARACTERS) {
   player(canvas, () => set.get(ANIMS[idx].name)!);
 }
 
-// Postie palettes.
-const palettes = document.getElementById("palettes")!;
-for (const [id, label] of [["postie", "Postie"], ["menta", "Menta"], ["noche", "Noche"], ["tostada", "Tostada"]]) {
-  const set = frames(id, 5);
-  const card = el("div", "card");
-  const canvas = el("canvas", "px");
-  card.append(canvas, el("div", "state", label));
-  palettes.append(card);
-  player(canvas, () => set.get("walking")!, 350);
-}
